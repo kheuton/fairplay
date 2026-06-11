@@ -300,13 +300,16 @@ export function useConnection(): {
 } {
   // Reactive: re-evaluates when the store token changes (unlike a bare getToken() call)
   const enabled = useTokenEnabled();
-  const query = useQuery<void>({
+  const query = useQuery<boolean>({
     queryKey: ['fp-connection'],
     enabled,
     retry: false,
     staleTime: 60 * 1000,
-    queryFn: async (): Promise<void> => {
+    queryFn: async (): Promise<boolean> => {
+      // Must resolve a non-undefined value: React Query v5 treats a queryFn
+      // that resolves undefined as an error, which would pin status at 'error'.
       await todoistGet<unknown>('/api/v1/projects?limit=1');
+      return true;
     },
   });
 
