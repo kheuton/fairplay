@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>FairPlay</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="theme.css" />
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script type="text/babel" src="tweaks-panel.jsx"></script>
+<script type="text/babel" src="data.jsx"></script>
+<script type="text/babel" src="icons.jsx"></script>
+<script type="text/babel" src="inventory-data.jsx"></script>
+<script type="text/babel" src="shell.jsx"></script>
+<script type="text/babel" src="views-list.jsx"></script>
+<script type="text/babel" src="views-bespoke.jsx"></script>
+<script type="text/babel" src="views-inventory.jsx"></script>
+
+<script type="text/babel">
+const { useState } = React;
+
+const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+  "theme": "Vapor",
+  "density": "compact",
+  "accent": "#EE3D17",
+  "showGrid": true,
+  "invDisplay": "stacked"
+}/*EDITMODE-END*/;
+
+// generic timeline data for non-custom cards
+function genericTimeline(card) {
+  return [
+    { id:card+"1", month:"JUN 2026", date:"Jun 11", urgent:true,  name:`${card} · weekly pass`, mt:"⟳ WEEKLY", recur:true },
+    { id:card+"2", month:"JUN 2026", date:"Jun 14", name:`${card} · catch-up`, mt:"ONE-OFF", recur:false },
+    { id:card+"3", month:"JUN 2026", date:"Jun 21", name:`${card} · weekly pass`, mt:"⟳ WEEKLY", recur:true },
+    { id:card+"4", month:"JUL 2026", date:"Jul 02", name:`${card} · monthly review`, mt:"⟳ MONTHLY", recur:true },
+  ];
+}
+
+function App() {
+  const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
+  const [view, setView] = useState({ kind:"inbox" });
+  const [query, setQuery] = useState("");
+  const [done, setDone] = useState(() => new Set());
+
+  const toggle = (id) => setDone(prev => {
+    const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n;
+  });
+
+  const nav = (item) => {
+    if (!item) return setView({ kind:"inbox" });
+    setView({ kind:"card", name:item.name, custom:item.custom || null });
+  };
+
+  let body;
+  if (view.kind === "inbox") {
+    body = <InboxView done={done} toggle={toggle} onNav={nav}/>;
+  } else if (view.custom === "inventory") {
+    body = <InventoryView key={view.name} cardKey={view.name} display={t.invDisplay || "stacked"} done={done} toggle={toggle}/>;
+  } else if (view.custom === "auto") {
+    body = <AutoView done={done} toggle={toggle}/>;
+  } else if (view.custom === "home") {
+    body = <BespokeStub card={view.name} kind="home" data={genericTimeline("Home").map(x=>({...x}))} done={done} toggle={toggle}/>;
+  } else if (view.custom === "datenight") {
+    body = <BespokeStub card={view.name} kind="datenight" data={genericTimeline("Date").map(x=>({...x}))} done={done} toggle={toggle}/>;
+  } else {
+    const data = view.name === "Garbage" ? GARBAGE : genericTimeline(view.name);
+    body = <TimelineView card={view.name} data={data} done={done} toggle={toggle}/>;
+  }
+
+  const appStyle = {};
+  if (t.accent) { appStyle["--accent"] = t.accent; appStyle["--accent-d"] = t.accent; }
+  if (!t.showGrid) appStyle.backgroundImage = "none";
+
+  const activeName = view.kind === "inbox" ? null : view.name;
+
+  return (
+    <div className="app" data-theme={(t.theme||"Bone").toLowerCase()} data-density={t.density} style={appStyle}>
+      <TopBar/>
+      <div className="body">
+        <Rail active={activeName} onNav={nav} query={query} setQuery={setQuery}/>
+        {body}
+      </div>
+
+      <TweaksPanel>
+        <TweakSection label="Theme" />
+        <TweakRadio label="Skin" value={t.theme} options={["Bone","Eclipse","Vapor"]}
+                    onChange={(v)=>setTweak("theme", v)} />
+        <TweakColor label="Accent" value={t.accent || "#EE3D17"}
+                    options={["#EE3D17","#0C857C","#FF3D8B","#E0A23A","#7A5AE0"]}
+                    onChange={(v)=>setTweak("accent", v)} />
+        <TweakButton label="Accent" onClick={()=>setTweak("accent","")}>Reset to skin default</TweakButton>
+        <TweakSection label="Inventory" />
+        <TweakRadio label="Counts" value={t.invDisplay} options={["stacked","inline","toggle"]}
+                    onChange={(v)=>setTweak("invDisplay", v)} />
+        <TweakSection label="Layout" />
+        <TweakRadio label="Density" value={t.density} options={["compact","regular","comfy"]}
+                    onChange={(v)=>setTweak("density", v)} />
+        <TweakToggle label="Background grid" value={t.showGrid}
+                     onChange={(v)=>setTweak("showGrid", v)} />
+      </TweaksPanel>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>

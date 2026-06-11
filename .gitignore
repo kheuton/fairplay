@@ -1,0 +1,16 @@
+# dependencies / build
+node_modules/
+dist/
+dist-ssr/
+
+# env & secrets — never commit tokens
+.env
+.env.*
+*.local
+
+# logs & tool state
+logs/
+*.log
+.design-canvas.state.json
+.thumbnail
+_run.sh
