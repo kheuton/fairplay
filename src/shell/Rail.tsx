@@ -134,6 +134,18 @@ export function Rail() {
 
       {/* Scrollable list */}
       <div className="rail-scroll">
+        {/* Pinned home item — the triage inbox */}
+        <NavLink
+          to="/"
+          end
+          className={({ isActive }) => `rail-item${isActive ? ' active' : ''}`}
+          style={{ textDecoration: 'none' }}
+        >
+          <span className="num mono">◆</span>
+          <span className="nm">Triage Inbox</span>
+          <span className="cnt mono">·</span>
+        </NavLink>
+
         {isLoading && <SkeletonRows />}
 
         {!isLoading && groups.map(({ cat, items }) => (

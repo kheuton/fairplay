@@ -128,7 +128,7 @@ function NoTokenBanner() {
   return (
     <div className="no-token-banner">
       <span className="msg mono">
-        <b>No Todoist token configured.</b> The app is in read-only stub mode.
+        <b>No Todoist token configured.</b> Add one in Settings to load your deck.
       </span>
       <button className="btn coral" onClick={() => navigate('/settings')}>
         Go to Settings
@@ -145,14 +145,15 @@ function AppShell() {
       <TopBar />
       <div className="body">
         <Rail />
-        <div className="view">
-          <Routes>
-            <Route path="/" element={<InboxPage />} />
-            <Route path="/card/:id" element={<CardPage />} />
-            <Route path="/settings" element={<SettingsPage />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
-        </div>
+        {/* Every page renders its own .view root — wrapping Routes in another
+            .view double-nests the flex column and breaks .view-body scrolling
+            (flex children default to min-height:auto and grow past the viewport). */}
+        <Routes>
+          <Route path="/" element={<InboxPage />} />
+          <Route path="/card/:id" element={<CardPage />} />
+          <Route path="/settings" element={<SettingsPage />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
       </div>
       <NoTokenBanner />
     </div>

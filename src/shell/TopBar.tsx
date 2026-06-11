@@ -106,11 +106,16 @@ export function TopBar() {
 
   return (
     <div className="topbar">
-      {/* Brand */}
-      <div className="brand">
+      {/* Brand — navigates home to the triage inbox */}
+      <button
+        className="brand"
+        onClick={() => navigate('/')}
+        title="Triage inbox"
+        style={{ background: 'transparent', border: 0, padding: 0, cursor: 'pointer', color: 'inherit', font: 'inherit' }}
+      >
         <div className="brand-mark" />
         <span className="brand-name">FAIRPLAY</span>
-      </div>
+      </button>
 
       <div className="tb-sep" />
 
