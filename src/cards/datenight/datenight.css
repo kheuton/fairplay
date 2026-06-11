@@ -1,0 +1,395 @@
+/* ============================================================
+   FAIRPLAY · DateNight Card — date-night planner
+   Structural layout uses shared bespoke classes from theme.css:
+     .bespoke, .stage, .stage-head, .stage-foot, .bespoke-side,
+     .bs-head, .bs-list
+   Only calendar-grid and idea-pool feature rules live here.
+   ============================================================ */
+
+/* Override .stage default padding; calendar sections manage their own spacing */
+.dn-stage {
+  padding: 0;
+}
+
+/* ── stage-head inner layout (add padding since .dn-stage resets it) ── */
+.dn-stage-head-inner {
+  margin-bottom: 0;
+  padding: 16px 22px 12px;
+  border-bottom: 1px solid var(--line-2);
+}
+
+.dn-month-nav {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.dn-month-nav button {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--ink-3);
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 13px;
+  line-height: 1;
+}
+.dn-month-nav button:hover {
+  color: var(--ink);
+  border-color: var(--ink-3);
+}
+
+.dn-month-label {
+  font-size: 10px;
+  color: var(--ink-2);
+  font-family: "JetBrains Mono", monospace;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  min-width: 90px;
+  text-align: center;
+}
+
+/* ── full-month calendar grid ── */
+.dn-cal-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 22px 22px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--ink-4) transparent;
+}
+
+.dn-cal {
+  width: 100%;
+}
+
+.dn-cal-header {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+  margin-bottom: 4px;
+}
+
+.dn-cal-dow {
+  font-size: 9px;
+  font-family: "JetBrains Mono", monospace;
+  color: var(--ink-4);
+  text-align: center;
+  padding-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+}
+
+.dn-cal-body {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+
+.dn-cal-cell {
+  min-height: 80px;
+  border: 1px solid var(--line-2);
+  padding: 4px 5px;
+  cursor: pointer;
+  position: relative;
+  transition: background-color .12s, border-color .12s;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.dn-cal-cell:hover {
+  background: color-mix(in srgb, var(--surface) 60%, transparent);
+  border-color: var(--line);
+}
+
+.dn-cal-cell.dn-other-month {
+  opacity: .35;
+  cursor: default;
+}
+.dn-cal-cell.dn-other-month:hover {
+  background: transparent;
+  border-color: var(--line-2);
+}
+
+.dn-cal-cell.dn-today {
+  border-color: var(--accent);
+}
+
+.dn-cal-cell.dn-armed {
+  border-color: var(--accent-2);
+  background: color-mix(in srgb, var(--accent-2) 6%, transparent);
+}
+.dn-cal-cell.dn-armed:hover {
+  background: color-mix(in srgb, var(--accent-2) 14%, transparent);
+}
+
+.dn-day-num {
+  font-size: 10px;
+  font-family: "JetBrains Mono", monospace;
+  color: var(--ink-3);
+  line-height: 1;
+  flex: 0 0 auto;
+}
+
+.dn-cal-cell.dn-today .dn-day-num {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+/* entry chip on a calendar day */
+.dn-entry-chip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 5px;
+  border: 1px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  cursor: pointer;
+  font-size: 9.5px;
+  color: var(--ink);
+  line-height: 1.3;
+  position: relative;
+}
+.dn-entry-chip:hover {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.dn-entry-chip.dn-chip-over {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+}
+.dn-chip-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dn-chip-recur {
+  flex: 0 0 auto;
+  color: var(--accent-2);
+  font-size: 9px;
+}
+
+/* .stage-foot needs padding since .dn-stage zeroes the shared stage padding */
+.dn-stage .stage-foot {
+  padding: 8px 22px;
+  border-top: 1px solid var(--line-2);
+}
+
+/* ── side panel head ── */
+.dn-side-head {
+  /* .bs-head provides padding and border-bottom */
+}
+
+.dn-side-title {
+  font-size: 10px;
+  font-family: "JetBrains Mono", monospace;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  margin-bottom: 8px;
+}
+
+/* armed scheduling chip */
+.dn-sched-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 10px;
+  border: 1px solid var(--accent-2);
+  color: var(--accent-2);
+  font-size: 9px;
+  font-family: "JetBrains Mono", monospace;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  cursor: pointer;
+  margin-top: 6px;
+}
+.dn-sched-chip:hover {
+  background: color-mix(in srgb, var(--accent-2) 10%, transparent);
+}
+.dn-sched-chip .x {
+  font-size: 11px;
+}
+
+/* idea list — inside .bs-list (.dn-pool-list) */
+.dn-idea-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line-2);
+  cursor: pointer;
+}
+.dn-idea-row:hover {
+  background: color-mix(in srgb, var(--surface) 50%, transparent);
+}
+.dn-idea-row.dn-armed-row {
+  background: color-mix(in srgb, var(--accent-2) 8%, transparent);
+  border-bottom-color: var(--accent-2);
+}
+
+.dn-idea-dot {
+  width: 6px;
+  height: 6px;
+  border: 1px solid var(--ink-3);
+  margin-top: 5px;
+  flex: 0 0 6px;
+}
+.dn-idea-row.dn-armed-row .dn-idea-dot {
+  background: var(--accent-2);
+  border-color: var(--accent-2);
+}
+
+.dn-idea-body {
+  flex: 1;
+  min-width: 0;
+}
+.dn-idea-name {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.2;
+}
+.dn-idea-note {
+  font-size: 9.5px;
+  color: var(--ink-3);
+  font-family: "JetBrains Mono", monospace;
+  margin-top: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* inline add idea form */
+.dn-add-idea {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  margin-top: 10px;
+  border: 1px solid var(--line);
+}
+.dn-add-idea input {
+  flex: 1;
+  background: transparent;
+  border: 0;
+  outline: none;
+  color: var(--ink);
+  font-family: "Space Grotesk", system-ui, sans-serif;
+  font-size: 13px;
+  padding: 8px 10px;
+}
+.dn-add-idea input::placeholder {
+  color: var(--ink-4);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+.dn-add-idea button {
+  background: transparent;
+  border: 0;
+  border-left: 1px solid var(--line);
+  padding: 8px 10px;
+  color: var(--ink-3);
+  cursor: pointer;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.dn-add-idea button:hover {
+  color: var(--ink);
+  background: var(--surface-2);
+}
+.dn-add-idea.dn-add-active {
+  border-color: var(--ink-3);
+}
+
+/* empty pool state */
+.dn-pool-empty {
+  padding: 24px 0;
+  text-align: center;
+  font-size: 10px;
+  font-family: "JetBrains Mono", monospace;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--ink-4);
+  line-height: 1.8;
+}
+
+/* side action buttons */
+.dn-side-actions {
+  display: flex;
+  gap: 8px;
+  padding: 10px 20px;
+  border-top: 1px solid var(--line-2);
+}
+.dn-side-actions button {
+  flex: 1;
+}
+
+/* ── entry popover ── */
+.dn-popover-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 150;
+}
+
+.dn-popover {
+  position: fixed;
+  z-index: 160;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+  padding: 14px 16px;
+  min-width: 220px;
+  max-width: 280px;
+}
+
+.dn-pop-name {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.2;
+  margin-bottom: 8px;
+}
+
+.dn-pop-due {
+  font-size: 10px;
+  font-family: "JetBrains Mono", monospace;
+  color: var(--ink-3);
+  margin-bottom: 12px;
+}
+
+.dn-pop-actions {
+  display: flex;
+  gap: 8px;
+}
+.dn-pop-actions button {
+  flex: 1;
+  padding: 6px 10px;
+  font-size: 10px;
+  font-family: "JetBrains Mono", monospace;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.dn-pop-actions button:hover {
+  color: var(--ink);
+  border-color: var(--ink-3);
+}
+.dn-pop-actions button.dn-pop-done {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+.dn-pop-actions button.dn-pop-done:hover {
+  opacity: .88;
+}

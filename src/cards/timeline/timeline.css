@@ -1,0 +1,124 @@
+/* ============================================================
+   FAIRPLAY · TimelineView extras
+   Colocated CSS for src/cards/timeline/TimelineView.tsx
+   ============================================================ */
+
+/* ── View head: ensure long card names wrap gracefully ─────── */
+.tl-view-head {
+  padding: 20px 26px 16px;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 18px;
+  flex-wrap: wrap;          /* wrap on very narrow viewports */
+}
+
+.tl-head-left {
+  min-width: 0;             /* allow flex child to shrink */
+  flex: 1 1 260px;
+}
+
+.tl-head-right {
+  flex: 0 0 auto;
+}
+
+/* Title must truncate only when extremely constrained */
+.tl-view-title {
+  font-size: 27px;
+  font-weight: 700;
+  letter-spacing: -.015em;
+  line-height: 1.15;
+  word-break: break-word;   /* long names like 'Home purchase/rental…' wrap */
+  overflow-wrap: anywhere;
+}
+
+/* ── Timeline body ─────────────────────────────────────────── */
+.tl-body-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px 26px 30px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--ink-4) transparent;
+}
+.tl-body-wrap::-webkit-scrollbar { width: 9px; }
+.tl-body-wrap::-webkit-scrollbar-thumb { background: var(--ink-4); }
+
+/* ── UNSCHEDULED section spacer ─────────────────────────────── */
+.tl-unscheduled {
+  margin-top: 24px;
+}
+
+/* ── Timeline node: override for priority 1 (urgent fill) ──── */
+.tl-item.p1::before {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+/* ── Recur indicator on tl-item (teal ring, hollow) ─────────── */
+.tl-item.recur::before {
+  border-color: var(--accent-2);
+  background: var(--bg);
+}
+
+/* Urgent + recur: accent fill wins */
+.tl-item.urgent.recur::before {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+/* ── Date column accent for tonight ──────────────────────────── */
+/* Uses --accent (coral) consistent with prototype's date-accent idiom. */
+/* --accent-2 (teal) is reserved for the recurring node ring only.       */
+.tl-date.tonight {
+  color: var(--accent);
+  text-transform: uppercase;
+}
+
+/* ── List mode ─────────────────────────────────────────────────── */
+.tl-list-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 26px 30px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--ink-4) transparent;
+}
+.tl-list-wrap::-webkit-scrollbar { width: 9px; }
+.tl-list-wrap::-webkit-scrollbar-thumb { background: var(--ink-4); }
+
+/* ── Done mode ─────────────────────────────────────────────────── */
+.tl-done-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px 26px 30px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--ink-4) transparent;
+}
+.tl-done-wrap::-webkit-scrollbar { width: 9px; }
+.tl-done-wrap::-webkit-scrollbar-thumb { background: var(--ink-4); }
+
+/* ── Empty state call-to-action ───────────────────────────────── */
+.tl-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  color: var(--ink-3);
+  padding: 40px 26px;
+}
+.tl-empty .lbl {
+  font-size: 12px;
+  font-family: "JetBrains Mono", monospace;
+  text-transform: uppercase;
+  letter-spacing: .12em;
+}
+.tl-empty .sub {
+  font-size: 10px;
+  color: var(--ink-4);
+  font-family: "JetBrains Mono", monospace;
+}

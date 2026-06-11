@@ -1,0 +1,229 @@
+/* ============================================================
+   FAIRPLAY · Home Maintenance card — blueprint styles
+   Colocated with HomeView; imported only by this view.
+   All colors via CSS vars; no hardcoded hex values.
+   ============================================================ */
+
+/* ── Blueprint SVG container ─────────────────────────────── */
+
+.blueprint-wrap {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  overflow: hidden;
+}
+
+.blueprint {
+  width: 100%;
+  max-width: 600px;
+  /* Blueprint paper tint — very subtle surface overlay */
+  filter: drop-shadow(0 2px 12px rgba(0,0,0,.22));
+}
+
+/* ── Blueprint grid & wall classes (mirror .schematic lang) ── */
+
+/* Outer double-line wall (thick) */
+.blueprint .wall-outer {
+  stroke: var(--ink-2);
+  stroke-width: 2.4;
+  fill: none;
+}
+
+/* Inner wall face of double-line */
+.blueprint .wall-inner {
+  stroke: var(--ink-3);
+  stroke-width: 1;
+  fill: none;
+}
+
+/* Interior partition walls */
+.blueprint .wall-int {
+  stroke: var(--ink-3);
+  stroke-width: 1;
+  fill: none;
+}
+
+/* Blueprint grid lines (lighter than schematic grid) */
+.blueprint .bp-grid {
+  stroke: var(--grid);
+  stroke-width: 1;
+  fill: none;
+}
+
+/* Door arc swing lines */
+.blueprint .door-arc {
+  stroke: var(--ink-4);
+  stroke-width: 0.8;
+  fill: none;
+  stroke-dasharray: 3 3;
+}
+
+/* Dimension tick lines */
+.blueprint .dim-ln {
+  stroke: var(--ink-4);
+  stroke-width: 0.8;
+  fill: none;
+}
+
+/* Dimension text */
+.blueprint .dim-txt {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 7px;
+  fill: var(--ink-4);
+  letter-spacing: 0.04em;
+}
+
+/* Title block text */
+.blueprint .title-txt {
+  font-family: "JetBrains Mono", monospace;
+  fill: var(--ink-3);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+/* Room labels */
+.blueprint .room-lbl {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 8px;
+  fill: var(--ink-3);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  pointer-events: none;
+  user-select: none;
+}
+
+/* ── Room hotspot rectangles ─────────────────────────────── */
+
+.bp-room {
+  cursor: pointer;
+  transition: fill 0.15s ease;
+}
+
+/* Default fill — nearly transparent */
+.bp-room .room-fill {
+  fill: transparent;
+  stroke: none;
+  transition: fill 0.15s ease;
+}
+
+/* Hover — lighten slightly */
+.bp-room:hover .room-fill {
+  fill: color-mix(in srgb, var(--ink) 5%, transparent);
+}
+
+/* Active (clicked / zone filter on) */
+.bp-room.active .room-fill {
+  fill: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+/* Exterior zone band */
+.bp-room.exterior .room-fill {
+  fill: color-mix(in srgb, var(--ink) 3%, transparent);
+}
+.bp-room.exterior:hover .room-fill {
+  fill: color-mix(in srgb, var(--ink) 7%, transparent);
+}
+.bp-room.exterior.active .room-fill {
+  fill: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+/* Room label — accent when active */
+.bp-room.active .room-lbl {
+  fill: var(--accent);
+}
+.bp-room.active .room-lbl-num {
+  fill: var(--accent);
+}
+
+/* ── Task pip badges on rooms ────────────────────────────── */
+
+/* Ink pip (has open tasks) */
+.room-pip {
+  transition: opacity 0.15s ease;
+}
+
+.room-pip circle.pip-dot {
+  fill: var(--ink-2);
+}
+
+/* Overdue pip — accent color */
+.room-pip.overdue circle.pip-dot {
+  fill: var(--accent);
+}
+
+/* Count badge text */
+.room-pip .pip-count {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 7px;
+  fill: var(--bg);
+  dominant-baseline: central;
+  text-anchor: middle;
+  pointer-events: none;
+}
+
+/* ── Side panel extras ────────────────────────────────────── */
+
+/* Zone select mono dropdown in SideTaskRow right slot */
+.zone-sel {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  color: var(--ink-3);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  padding: 3px 6px;
+  cursor: pointer;
+  max-width: 90px;
+  outline: none;
+  text-transform: uppercase;
+}
+.zone-sel:hover {
+  border-color: var(--ink-3);
+  color: var(--ink);
+}
+.zone-sel:focus {
+  border-color: var(--accent);
+}
+
+/* Head meta sub-line for zone/overdue counts */
+.home-head-sub {
+  font-size: 9.5px;
+  color: var(--ink-3);
+  font-family: "JetBrains Mono", monospace;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  margin-top: 6px;
+}
+
+/* Title block border in blueprint stage */
+.title-block {
+  stroke: var(--ink-4);
+  stroke-width: 0.8;
+  fill: color-mix(in srgb, var(--surface) 80%, transparent);
+}
+
+/* Stage sheet label */
+.sheet-label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  color: var(--ink-4);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+/* Card number glyph */
+.home-glyph {
+  width: 42px;
+  height: 42px;
+  border: 1px solid var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 13px;
+  letter-spacing: 0.05em;
+  flex: 0 0 42px;
+}

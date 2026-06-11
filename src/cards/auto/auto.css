@@ -1,0 +1,158 @@
+/* ============================================================
+   FAIRPLAY · AutoView — Subaru Forester schematic
+   Scoped to .auto-view; imports alongside AutoView.tsx
+   ============================================================ */
+
+/* ── card-glyph ──────────────────────────────────────────── */
+.auto-glyph {
+  width: 42px;
+  height: 42px;
+  border: 1px solid var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  flex: 0 0 42px;
+}
+
+/* ── view-head ───────────────────────────────────────────── */
+.auto-view-head-left {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+}
+
+/* ── odometer edit ───────────────────────────────────────── */
+.odo-big {
+  font-size: 30px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+}
+.odo-big:hover { color: var(--accent-2); }
+.odo-unit {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-2);
+}
+.odo-edit-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.odo-input {
+  background: var(--surface-2);
+  border: 1px solid var(--accent-2);
+  color: var(--ink);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 22px;
+  font-weight: 700;
+  width: 130px;
+  padding: 4px 8px;
+  outline: none;
+}
+.odo-input:focus { border-color: var(--accent-2); }
+.odo-save {
+  font-size: 10px;
+  padding: 5px 10px;
+}
+
+/* ── part-assign select ──────────────────────────────────── */
+.part-select {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  color: var(--ink-3);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  padding: 3px 5px;
+  outline: none;
+  cursor: pointer;
+  max-width: 90px;
+  min-width: 72px;
+}
+.part-select:hover { border-color: var(--ink-3); }
+.part-select:focus { border-color: var(--accent-2); }
+
+/* ── side task rows ──────────────────────────────────────── */
+.auto-trow {
+  display: grid;
+  grid-template-columns: 24px 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line-2);
+  cursor: pointer;
+}
+.auto-trow:hover { background: color-mix(in srgb, var(--surface) 50%, transparent); }
+
+.auto-trow-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.auto-trow-name {
+  font-size: 13.5px;
+  font-weight: 500;
+  line-height: 1.2;
+}
+.auto-trow.done .auto-trow-name {
+  color: var(--ink-3);
+  text-decoration: line-through;
+  text-decoration-color: var(--ink-4);
+}
+.auto-trow-sub {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9.5px;
+  color: var(--ink-3);
+  display: flex;
+  gap: 9px;
+  align-items: center;
+}
+.auto-trow-sub .over { color: var(--accent); }
+
+.auto-trow-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+/* ── add-task button ─────────────────────────────────────── */
+.auto-add-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 0;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  color: var(--ink-4);
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  width: 100%;
+  border-top: 1px solid var(--line-2);
+  margin-top: 4px;
+}
+.auto-add-btn:hover { color: var(--accent-2); border-top-color: var(--accent-2); }
+
+/* ── stage-foot trivia ───────────────────────────────────── */
+.auto-trivia {
+  display: flex;
+  justify-content: space-between;
+  font-size: 9.5px;
+  color: var(--ink-4);
+  font-family: "JetBrains Mono", monospace;
+  letter-spacing: .10em;
+}

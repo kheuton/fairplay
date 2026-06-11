@@ -1,0 +1,48 @@
+/* ============================================================
+   FAIRPLAY · InventoryView extras
+   Grid, detail panel, add-supply form — supplements theme.css
+   ============================================================ */
+
+/* Empty state panel */
+.inv-empty-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  flex: 1;
+  min-height: 0;
+  padding: 40px 26px;
+}
+
+/* Add supply inline form */
+.inv-add-form {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.inv-add-input {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  padding: 5px 10px;
+  font-size: 10.5px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  outline: none;
+  width: 180px;
+}
+
+.inv-add-input:focus {
+  border-color: var(--ink-3);
+}
+
+.inv-add-input::placeholder {
+  color: var(--ink-4);
+}
+
+/* Stage footer: allow add-supply form to sit inline */
+.stage-foot {
+  align-items: center;
+}

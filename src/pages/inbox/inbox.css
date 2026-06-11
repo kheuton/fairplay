@@ -1,0 +1,109 @@
+/* ============================================================
+   FAIRPLAY · Inbox page — feature CSS
+   All layout/chrome for InboxPage. Colors via CSS vars only.
+   ============================================================ */
+
+/* ─── Outer layout: scrollable list + fixed peek ──────────────────────────── */
+.inbox-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+.inbox-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px 26px 40px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--ink-4) transparent;
+}
+.inbox-scroll::-webkit-scrollbar { width: 9px; }
+.inbox-scroll::-webkit-scrollbar-thumb { background: var(--ink-4); }
+
+/* ─── LATER group: collapsible ─────────────────────────────────────────────── */
+.later-toggle {
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  color: var(--ink-3);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  padding: 6px 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.later-toggle:hover { color: var(--ink-2); }
+
+/* ─── ALL CLEAR empty state ────────────────────────────────────────────────── */
+.inbox-all-clear {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  gap: 14px;
+  min-height: 200px;
+  color: var(--ink-3);
+}
+.inbox-all-clear .ac-mark {
+  font-size: 18px;
+  color: var(--accent-2);
+  font-family: "JetBrains Mono", monospace;
+  letter-spacing: .15em;
+}
+.inbox-all-clear .ac-sub {
+  font-size: 11px;
+  font-family: "JetBrains Mono", monospace;
+  letter-spacing: .08em;
+  color: var(--ink-4);
+}
+
+/* ─── Triage group spacing ──────────────────────────────────────────────────── */
+.triage-group {
+  margin-bottom: 22px;
+}
+
+/* ─── Done rows ────────────────────────────────────────────────────────────── */
+.trow.task-done .t-name {
+  text-decoration: line-through;
+  color: var(--ink-3);
+}
+
+/* ─── Peek: NEXT UP card ───────────────────────────────────────────────────── */
+.nextcard .mt {
+  font-size: 10px;
+  color: var(--ink-3);
+  margin-top: 7px;
+  font-family: "JetBrains Mono", monospace;
+  letter-spacing: .04em;
+  line-height: 1.5;
+}
+
+/* ─── Peek scrollable ──────────────────────────────────────────────────────── */
+.peek {
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--ink-4) transparent;
+}
+.peek::-webkit-scrollbar { width: 6px; }
+.peek::-webkit-scrollbar-thumb { background: var(--ink-4); }
+
+/* ─── Stats in peek: strip left/right outer borders to fit flush ───────────── */
+.peek .stats {
+  border-left: 0;
+  border-right: 0;
+}
+
+/* ─── Kicker in view-head ───────────────────────────────────────────────────── */
+.view-head .kicker-text {
+  font-size: 10px;
+  color: var(--ink-3);
+  font-family: "JetBrains Mono", monospace;
+  text-transform: uppercase;
+  letter-spacing: .15em;
+}
