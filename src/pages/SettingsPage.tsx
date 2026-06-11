@@ -4,8 +4,10 @@
  */
 import React, { useState } from 'react';
 import { useSettings } from '../state/settings';
-import { useDeck, useConnection } from '../lib/todoist/hooks';
+import { useDeck, useDeckTasks, useConnection, useAbsorbCharter, useDeckCharters } from '../lib/todoist/hooks';
+import { detectConceptTasks } from '../lib/charter';
 import type { Theme, Density, InvDisplay } from '../state/settings';
+import type { CardDef } from '../lib/types';
 
 // ─── Accent swatches ─────────────────────────────────────────────────────────
 
@@ -115,6 +117,126 @@ function TokenInput() {
         SAVE
       </button>
     </div>
+  );
+}
+
+// ─── ChartersSection ──────────────────────────────────────────────────────────
+
+/**
+ * Bulk absorb section: shows how many cards have unabsorbed concept tasks,
+ * lets the user absorb all at once with sequential progress display.
+ * Note: useDeckTasks excludes carriers (FP-charter) by design, so concept
+ * tasks that were already absorbed (closed) will not be counted.
+ */
+function ChartersSection() {
+  const { data: deck } = useDeck();
+  const { data: tasks } = useDeckTasks();
+  const deckCharters = useDeckCharters();
+  const absorbMutation = useAbsorbCharter();
+  const { status: connStatus } = useConnection();
+
+  const [running, setRunning] = useState(false);
+  const [progress, setProgress] = useState<string[]>([]);
+  const [done, setDone] = useState<{ total: number; cards: number } | null>(null);
+
+  if (connStatus === 'no-token' || !deck || !tasks) return null;
+
+  // Find cards where absorb will actually do something:
+  // at least one detected concept task maps to a currently-empty charter field.
+  // This mirrors the !nextFields[field] guard in useAbsorbCharter.
+  const cardsWithConcepts: CardDef[] = [];
+  for (const card of deck) {
+    const cardTasks = tasks.filter((t) => t.cardId === card.id);
+    const matches = detectConceptTasks(cardTasks);
+    if (matches.length === 0) continue;
+    const charterFields = deckCharters.get(card.id) ?? null;
+    const hasEmptyTargetField = matches.some(
+      ({ field }) => !charterFields || !charterFields[field]
+    );
+    if (hasEmptyTargetField) cardsWithConcepts.push(card);
+  }
+
+  const unabsorbedCount = cardsWithConcepts.length;
+
+  async function handleAbsorbAll() {
+    if (cardsWithConcepts.length === 0 || running) return;
+    setRunning(true);
+    setProgress([]);
+    setDone(null);
+
+    let totalAbsorbed = 0;
+    let cardsAbsorbed = 0;
+
+    for (const card of cardsWithConcepts) {
+      setProgress((p) => [...p, `Absorbing ${card.name}...`]);
+      try {
+        const result = await absorbMutation.mutateAsync({ cardId: card.id });
+        if (result.absorbed > 0) {
+          totalAbsorbed += result.absorbed;
+          cardsAbsorbed += 1;
+          setProgress((p) => [
+            ...p.slice(0, -1),
+            `${card.name} · ${result.absorbed} task${result.absorbed === 1 ? '' : 's'} absorbed`,
+          ]);
+        } else {
+          setProgress((p) => [...p.slice(0, -1), `${card.name} · nothing new to absorb`]);
+        }
+      } catch {
+        setProgress((p) => [...p.slice(0, -1), `${card.name} · error`]);
+      }
+    }
+
+    setRunning(false);
+    setDone({ total: totalAbsorbed, cards: cardsAbsorbed });
+  }
+
+  return (
+    <>
+      <div
+        className="mono up"
+        style={{ fontSize: 9.5, color: 'var(--ink-4)', marginTop: 28, marginBottom: 14, letterSpacing: '0.12em' }}
+      >
+        CHARTERS
+      </div>
+
+      <div className="cfg-row" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 10 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+          <span className="lbl">CONCEPT TASKS</span>
+          <span className="mono" style={{ fontSize: 10, color: unabsorbedCount > 0 ? 'var(--accent)' : 'var(--ink-3)' }}>
+            {unabsorbedCount} CARD{unabsorbedCount !== 1 ? 'S' : ''} WITH UNABSORBED CONCEPT TASKS
+          </span>
+        </div>
+
+        <div className="mono" style={{ fontSize: 9, color: 'var(--ink-4)', lineHeight: 1.5 }}>
+          CONCEPT TASKS ARE COMPLETED (NOT DELETED) — FULLY REVERSIBLE.
+        </div>
+
+        {done && (
+          <div className="mono" style={{ fontSize: 10, color: 'var(--accent-2)', letterSpacing: '.08em' }}>
+            ✓ {done.total} TASK{done.total !== 1 ? 'S' : ''} ABSORBED ACROSS {done.cards} CARD{done.cards !== 1 ? 'S' : ''}
+          </div>
+        )}
+
+        {progress.length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+            {progress.map((msg, i) => (
+              <div key={i} className="mono" style={{ fontSize: 9, color: 'var(--ink-2)', letterSpacing: '.06em' }}>
+                {msg}
+              </div>
+            ))}
+          </div>
+        )}
+
+        <button
+          className="btn coral"
+          style={{ fontSize: 9, padding: '6px 12px' }}
+          disabled={running || unabsorbedCount === 0}
+          onClick={() => void handleAbsorbAll()}
+        >
+          {running ? 'ABSORBING...' : 'ABSORB ALL → CHARTERS'}
+        </button>
+      </div>
+    </>
   );
 }
 
@@ -280,6 +402,11 @@ export default function SettingsPage() {
               <span className="lbl">DECK</span>
               <DeckReadout />
             </div>
+          )}
+
+          {/* ── CHARTERS ──────────────────────────────────────────────── */}
+          {(connStatus === 'ok' || connStatus === 'checking') && (
+            <ChartersSection />
           )}
 
         </div>

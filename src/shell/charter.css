@@ -1,0 +1,229 @@
+/* ============================================================
+   FAIRPLAY · CharterPanel
+   Collapsed strip + expanded CPE/MSC fields panel.
+   Lives directly under view-head in every card view.
+   ============================================================ */
+
+/* ── Collapsed strip ─────────────────────────────────────────── */
+.charter-strip {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 26px;
+  height: 34px;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface) 55%, transparent);
+  cursor: pointer;
+  user-select: none;
+}
+
+.charter-strip:hover {
+  background: color-mix(in srgb, var(--surface-2) 70%, transparent);
+}
+
+.charter-strip-toggle {
+  font-size: 9.5px;
+  color: var(--ink-3);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.charter-strip-caret {
+  transition: transform .15s ease;
+  display: inline-block;
+}
+
+.charter-strip-caret.open {
+  transform: rotate(90deg);
+}
+
+.charter-strip-label {
+  letter-spacing: .12em;
+}
+
+.charter-strip-revised {
+  font-size: 9px;
+  color: var(--accent-2);
+  letter-spacing: .1em;
+}
+
+.charter-strip-unset {
+  font-size: 9px;
+  color: var(--ink-4);
+  letter-spacing: .1em;
+}
+
+.charter-strip-spacer {
+  flex: 1;
+}
+
+/* Concept-tasks absorb chip (pill on the right of the strip) */
+.charter-absorb-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  font-size: 9px;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  letter-spacing: .1em;
+  cursor: pointer;
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  transition: background .12s;
+}
+
+.charter-absorb-chip:hover {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+/* ── Expanded panel ──────────────────────────────────────────── */
+.charter-panel {
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface) 45%, transparent);
+  padding: 20px 26px;
+  display: flex;
+  gap: 20px;
+}
+
+/* MSC — left column, wider */
+.charter-col-msc {
+  flex: 1.2;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* CPE — right column, three fields stacked */
+.charter-col-cpe {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Single field block */
+.charter-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.charter-field-label {
+  font-size: 8.5px;
+  color: var(--ink-4);
+  letter-spacing: .13em;
+}
+
+.charter-field-body {
+  padding: 10px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  font-size: 13px;
+  line-height: 1.5;
+  min-height: 54px;
+  cursor: pointer;
+  color: var(--ink);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.charter-field-body:hover {
+  border-color: var(--ink-3);
+}
+
+.charter-field-body.empty {
+  color: var(--ink-4);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9.5px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  display: flex;
+  align-items: center;
+}
+
+.charter-field-body.readonly {
+  cursor: default;
+}
+
+.charter-field-body.readonly:hover {
+  border-color: var(--line);
+}
+
+/* Textarea edit mode */
+.charter-textarea {
+  background: var(--surface-2);
+  border: 1px solid var(--ink-3);
+  color: var(--ink);
+  font-family: "Space Grotesk", system-ui, sans-serif;
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 10px 12px;
+  resize: vertical;
+  min-height: 72px;
+  outline: none;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.charter-textarea:focus {
+  border-color: var(--accent-2);
+}
+
+.charter-field-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* ── Absorb confirm strip ─────────────────────────────────────── */
+.charter-absorb-confirm {
+  margin-top: 4px;
+  padding: 12px;
+  border: 1px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.charter-absorb-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.charter-absorb-list li {
+  font-size: 10.5px;
+  color: var(--ink-2);
+  padding-left: 14px;
+  position: relative;
+}
+
+.charter-absorb-list li::before {
+  content: "▸";
+  position: absolute;
+  left: 0;
+  color: var(--accent);
+  font-size: 8px;
+  top: 2px;
+}
+
+.charter-absorb-hint {
+  font-size: 9px;
+  color: var(--ink-4);
+  letter-spacing: .08em;
+  line-height: 1.5;
+}
+
+.charter-absorb-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}

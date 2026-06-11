@@ -27,6 +27,7 @@ import {
 } from '../../lib/todoist/hooks';
 import { LoadState } from '../../shell/atoms';
 import { QuickAdd } from '../../shell/QuickAdd';
+import { CharterPanel } from '../../shell/CharterPanel';
 import './datenight.css';
 
 interface Props {
@@ -241,6 +242,7 @@ export default function DateNightView({ card }: Props) {
     return (
       <div className="view">
         <ViewHead card={card} nextInfo={null} ideaCount={0} />
+        <CharterPanel card={card} />
         <div className="view-body" style={{ display: 'flex' }}>
           <LoadState status="no-token" />
         </div>
@@ -252,6 +254,7 @@ export default function DateNightView({ card }: Props) {
     return (
       <div className="view">
         <ViewHead card={card} nextInfo={null} ideaCount={0} />
+        <CharterPanel card={card} />
         <div className="view-body" style={{ display: 'flex' }}>
           <LoadState status="loading" />
         </div>
@@ -263,6 +266,7 @@ export default function DateNightView({ card }: Props) {
     return (
       <div className="view">
         <ViewHead card={card} nextInfo={null} ideaCount={0} />
+        <CharterPanel card={card} />
         <div className="view-body" style={{ display: 'flex' }}>
           <LoadState
             status="error"
@@ -281,6 +285,7 @@ export default function DateNightView({ card }: Props) {
     <>
       <div className="view">
         <ViewHead card={card} nextInfo={nextInfo} ideaCount={ideas.length} />
+        <CharterPanel card={card} />
 
         <div className="bespoke">
           {/* ── STAGE: calendar ── */}

@@ -28,6 +28,13 @@ import { resolveDeck, buildProjectToCard } from './deck';
 import { rawToFpTask, taskUrl } from './mapping';
 import { parseFp, withFp } from '../metadata';
 import { format } from 'date-fns';
+import {
+  parseCharter,
+  serializeCharter,
+  detectConceptTasks,
+  absorbText,
+  type CharterFields,
+} from '../charter';
 
 // ---------------------------------------------------------------------------
 // Label constants for carrier tasks
@@ -35,6 +42,7 @@ import { format } from 'date-fns';
 
 const LABEL_ITEM = 'FP-item';
 const LABEL_CONFIG = 'FP-config';
+const LABEL_CHARTER = 'FP-charter';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -126,7 +134,12 @@ export function useDeckTasks(): UseQueryResult<FpTask[]> {
     enabled: enabled && !!deck,
     queryFn: makeTaskQueryFn(deck),
     select: (tasks) =>
-      tasks.filter((t) => !t.labels.includes(LABEL_ITEM) && !t.labels.includes(LABEL_CONFIG)),
+      tasks.filter(
+        (t) =>
+          !t.labels.includes(LABEL_ITEM) &&
+          !t.labels.includes(LABEL_CONFIG) &&
+          !t.labels.includes(LABEL_CHARTER)
+      ),
   });
 }
 
@@ -144,7 +157,8 @@ export function useCardTasks(cardId: string): UseQueryResult<FpTask[]> {
         (t) =>
           t.cardId === cardId &&
           !t.labels.includes(LABEL_ITEM) &&
-          !t.labels.includes(LABEL_CONFIG)
+          !t.labels.includes(LABEL_CONFIG) &&
+          !t.labels.includes(LABEL_CHARTER)
       ),
   });
 }
@@ -564,7 +578,223 @@ export function useSeedInventory(): UseMutationResult<void, Error, SeedInventory
 }
 
 // ---------------------------------------------------------------------------
+// Charter hooks
+// ---------------------------------------------------------------------------
+
+/**
+ * All FP-charter carriers across the deck, keyed by cardId.
+ * Returns a Map<cardId, CharterFields | null> — null means no carrier exists yet.
+ * Reads from the shared ['fp-tasks'] cache (carriers are not excluded there).
+ */
+export function useDeckCharters(): Map<string, CharterFields | null> {
+  const enabled = useTokenEnabled();
+  const { data: deck } = useDeck();
+
+  const query = useQuery<FpTask[], Error, Map<string, CharterFields | null>>({
+    queryKey: ['fp-tasks'],
+    enabled: enabled && !!deck,
+    queryFn: makeTaskQueryFn(deck),
+    select: (tasks) => {
+      const map = new Map<string, CharterFields | null>();
+      // Pre-populate all deck cards with null (no charter)
+      if (deck) {
+        for (const card of deck) {
+          map.set(card.id, null);
+        }
+      }
+      // Fill in parsed charter fields from carriers
+      for (const t of tasks) {
+        if (t.cardId && t.labels.includes(LABEL_CHARTER)) {
+          map.set(t.cardId, parseCharter(t.description ?? ''));
+        }
+      }
+      return map;
+    },
+  });
+
+  return query.data ?? new Map();
+}
+
+export interface UseCharterResult {
+  fields: CharterFields | null;
+  exists: boolean;
+  revised: string | null;
+  save: (fields: CharterFields) => void;
+  saving: boolean;
+}
+
+/**
+ * Read and write the FP-charter carrier for a card.
+ * Reads from the ['fp-tasks'] cache (select on LABEL_CHARTER for this card).
+ * Save updates the carrier's description via serializeCharter + withFp,
+ * lazily creating the task when absent.
+ * Invalidates ['fp-tasks'] on settle.
+ */
+export function useCharter(cardId: string): UseCharterResult {
+  const enabled = useTokenEnabled();
+  const qc = useQueryClient();
+  const { data: deck } = useDeck();
+  const card = deck?.find((c) => c.id === cardId);
+
+  // Select the charter carrier for this card from the shared task cache
+  const charterQuery = useQuery<FpTask[], Error, FpTask | null>({
+    queryKey: ['fp-tasks'],
+    enabled: enabled && !!deck,
+    queryFn: makeTaskQueryFn(deck),
+    select: (tasks) =>
+      tasks.find(
+        (t) => t.cardId === cardId && t.labels.includes(LABEL_CHARTER)
+      ) ?? null,
+  });
+
+  const charterTask = charterQuery.data ?? null;
+  const exists = charterTask !== null;
+
+  const fields: CharterFields | null = charterTask
+    ? parseCharter(charterTask.description ?? '')
+    : null;
+
+  const revised =
+    charterTask &&
+    typeof charterTask.meta.charter === 'object' &&
+    charterTask.meta.charter !== null &&
+    typeof (charterTask.meta.charter as Record<string, unknown>).revised === 'string'
+      ? (charterTask.meta.charter as Record<string, unknown>).revised as string
+      : null;
+
+  const mutation = useMutation<void, Error, CharterFields>({
+    mutationFn: async (next: CharterFields): Promise<void> => {
+      if (!card) throw new Error(`Card not found: ${cardId}`);
+      const token = getToken();
+      if (!token) throw new Error('No token');
+
+      const today = localDateString();
+      const cleanDesc = serializeCharter(next);
+      const newMeta = { charter: { revised: today } };
+      const newDesc = withFp(cleanDesc, newMeta);
+
+      if (charterTask) {
+        await todoistPost(`/api/v1/tasks/${charterTask.id}`, { description: newDesc });
+      } else {
+        await todoistPost('/api/v1/tasks', {
+          content: `Card charter — ${card.name}`,
+          project_id: card.todoistId,
+          description: newDesc,
+          labels: [LABEL_CHARTER],
+        });
+      }
+    },
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: ['fp-tasks'] });
+    },
+  });
+
+  return {
+    fields,
+    exists,
+    revised,
+    save: (f: CharterFields) => mutation.mutate(f),
+    saving: mutation.isPending,
+  };
+}
+
+export interface AbsorbCharterResult {
+  absorbed: number;
+}
+
+/**
+ * Absorb seeded concept tasks into the card's charter.
+ * Detects concept tasks via detectConceptTasks, fills only empty charter fields,
+ * saves the updated charter, then closes the original tasks (reversible).
+ */
+export function useAbsorbCharter(): UseMutationResult<
+  AbsorbCharterResult,
+  Error,
+  { cardId: string }
+> {
+  const qc = useQueryClient();
+  const { data: deck } = useDeck();
+
+  return useMutation<AbsorbCharterResult, Error, { cardId: string }>({
+    mutationFn: async ({ cardId }): Promise<AbsorbCharterResult> => {
+      const card = deck?.find((c) => c.id === cardId);
+      if (!card) throw new Error(`Card not found: ${cardId}`);
+
+      // Fetch the latest task list directly (bypass cache for fresh state)
+      const projectToCard = buildProjectToCard(deck ?? []);
+      const rawTasks = await fetchAllPages<RawTask>(
+        `/api/v1/tasks?project_id=${card.todoistId}&limit=200`
+      );
+      const allTasks = rawTasks.map((t) => rawToFpTask(t, projectToCard));
+
+      // Open todos for this card (excludes carriers)
+      const cardTodos = allTasks.filter(
+        (t) =>
+          t.cardId === cardId &&
+          !t.labels.includes(LABEL_ITEM) &&
+          !t.labels.includes(LABEL_CONFIG) &&
+          !t.labels.includes(LABEL_CHARTER)
+      );
+
+      // Find the charter carrier
+      const charterTask = allTasks.find(
+        (t) => t.cardId === cardId && t.labels.includes(LABEL_CHARTER)
+      ) ?? null;
+
+      // Current charter fields (empty if no carrier exists yet)
+      const currentFields: CharterFields = charterTask
+        ? parseCharter(charterTask.description ?? '')
+        : { msc: '', conception: '', planning: '', execution: '' };
+
+      // Detect concept tasks
+      const matches = detectConceptTasks(cardTodos);
+      if (matches.length === 0) return { absorbed: 0 };
+
+      // Fill only empty fields
+      const nextFields: CharterFields = { ...currentFields };
+      const toClose: string[] = [];
+
+      for (const { field, task } of matches) {
+        if (!nextFields[field]) {
+          nextFields[field] = absorbText(task);
+          toClose.push(task.id);
+        }
+      }
+
+      if (toClose.length === 0) return { absorbed: 0 };
+
+      // Save the updated charter
+      const today = localDateString();
+      const cleanDesc = serializeCharter(nextFields);
+      const newDesc = withFp(cleanDesc, { charter: { revised: today } });
+
+      if (charterTask) {
+        await todoistPost(`/api/v1/tasks/${charterTask.id}`, { description: newDesc });
+      } else {
+        await todoistPost('/api/v1/tasks', {
+          content: `Card charter — ${card.name}`,
+          project_id: card.todoistId,
+          description: newDesc,
+          labels: [LABEL_CHARTER],
+        });
+      }
+
+      // Close original concept tasks
+      await Promise.all(
+        toClose.map((id) => todoistPost(`/api/v1/tasks/${id}/close`))
+      );
+
+      return { absorbed: toClose.length };
+    },
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: ['fp-tasks'] });
+      void qc.invalidateQueries({ queryKey: ['fp-completed'] });
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Re-exports for convenience
 // ---------------------------------------------------------------------------
 export { todoistDelete };
-export type { FpTask, FpMeta, InvMeta, CardDef };
+export type { FpTask, FpMeta, InvMeta, CardDef, CharterFields };

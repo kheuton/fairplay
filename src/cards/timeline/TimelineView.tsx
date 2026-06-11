@@ -29,6 +29,7 @@ import { useConnection } from '../../lib/todoist/hooks';
 import { monthLabel } from '../../lib/format';
 import { Seg, TaskRow, LoadState, GroupLabel } from '../../shell/atoms';
 import { QuickAdd } from '../../shell/QuickAdd';
+import { CharterPanel } from '../../shell/CharterPanel';
 import './timeline.css';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -368,6 +369,7 @@ export default function TimelineView({ card }: Props) {
     return (
       <div className="view">
         <ViewHead card={card} scheduledCount={0} mode={mode} onModeChange={handleModeChange} onAddTask={() => setQaOpen(true)} />
+        <CharterPanel card={card} />
         <LoadState status="no-token" />
         <QuickAdd open={qaOpen} onClose={() => setQaOpen(false)} presetCardId={card.id} />
       </div>
@@ -378,6 +380,7 @@ export default function TimelineView({ card }: Props) {
     return (
       <div className="view">
         <ViewHead card={card} scheduledCount={0} mode={mode} onModeChange={handleModeChange} onAddTask={() => setQaOpen(true)} />
+        <CharterPanel card={card} />
         <LoadState status="loading" />
         <QuickAdd open={qaOpen} onClose={() => setQaOpen(false)} presetCardId={card.id} />
       </div>
@@ -388,6 +391,7 @@ export default function TimelineView({ card }: Props) {
     return (
       <div className="view">
         <ViewHead card={card} scheduledCount={0} mode={mode} onModeChange={handleModeChange} onAddTask={() => setQaOpen(true)} />
+        <CharterPanel card={card} />
         <LoadState
           status="error"
           message="Could not load tasks from Todoist"
@@ -410,6 +414,7 @@ export default function TimelineView({ card }: Props) {
         onModeChange={handleModeChange}
         onAddTask={() => setQaOpen(true)}
       />
+      <CharterPanel card={card} />
 
       {isEmpty ? (
         <div className="tl-empty">

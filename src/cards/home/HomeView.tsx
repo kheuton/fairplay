@@ -12,6 +12,7 @@ import type { CardDef, FpTask } from '../../lib/types';
 import { useCardTasks, useCloseTask, useUpdateTask, useConnection } from '../../lib/todoist/hooks';
 import { SideTaskRow, GroupLabel, LoadState } from '../../shell/atoms';
 import { QuickAdd } from '../../shell/QuickAdd';
+import { CharterPanel } from '../../shell/CharterPanel';
 import { ROOMS, DOOR_ARCS, type Room } from './floorplan';
 import './home.css';
 
@@ -282,6 +283,7 @@ export default function HomeView({ card }: Props) {
         <div className="view-head">
           <ViewHeadInner card={card} openCount={0} zonesWithTasks={0} overdueCount={0} />
         </div>
+        <CharterPanel card={card} />
         <LoadState status="no-token" />
         <QuickAdd open={qaOpen} onClose={() => setQaOpen(false)} presetCardId={card.id} />
       </div>
@@ -294,6 +296,7 @@ export default function HomeView({ card }: Props) {
         <div className="view-head">
           <ViewHeadInner card={card} openCount={0} zonesWithTasks={0} overdueCount={0} />
         </div>
+        <CharterPanel card={card} />
         <LoadState status="loading" />
       </div>
     );
@@ -305,6 +308,7 @@ export default function HomeView({ card }: Props) {
         <div className="view-head">
           <ViewHeadInner card={card} openCount={0} zonesWithTasks={0} overdueCount={0} />
         </div>
+        <CharterPanel card={card} />
         <LoadState status="error" message="Could not load tasks" retry={() => void refetch()} />
       </div>
     );
@@ -323,6 +327,8 @@ export default function HomeView({ card }: Props) {
           overdueCount={overdueCount}
         />
       </div>
+
+      <CharterPanel card={card} />
 
       {/* ── Bespoke body ──────────────────────────────────────────────── */}
       <div className="bespoke">

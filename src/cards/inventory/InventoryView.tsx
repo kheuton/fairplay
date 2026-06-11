@@ -29,6 +29,7 @@ import {
 } from '../../lib/inventory-math';
 import { ItemIcon, ICON_ORDER, ICON_LIB } from '../../shell/icons';
 import { SideTaskRow, Stp, LoadState } from '../../shell/atoms';
+import { CharterPanel } from '../../shell/CharterPanel';
 import { format } from 'date-fns';
 import { getSeedDef } from './seeds';
 import './inventory.css';
@@ -860,6 +861,7 @@ export default function InventoryView({ card }: Props) {
     return (
       <div className="view">
         <ViewHead card={card} items={[]} alerts={0} cols={cols} rows={rows} />
+        <CharterPanel card={card} />
         <div className="view-body">
           <LoadState status="loading" />
         </div>
@@ -871,6 +873,7 @@ export default function InventoryView({ card }: Props) {
     return (
       <div className="view">
         <ViewHead card={card} items={[]} alerts={0} cols={cols} rows={rows} />
+        <CharterPanel card={card} />
         <div className="view-body">
           <LoadState
             status="error"
@@ -887,6 +890,7 @@ export default function InventoryView({ card }: Props) {
     return (
       <div className="view">
         <ViewHead card={card} items={[]} alerts={0} cols={6} rows={3} />
+        <CharterPanel card={card} />
         <div className="view-body">
           <div className="inv-empty-panel">
             <div className="mono up" style={{ fontSize: 10, color: 'var(--ink-3)', marginBottom: 16 }}>
@@ -933,6 +937,7 @@ export default function InventoryView({ card }: Props) {
   return (
     <div className="view">
       <ViewHead card={card} items={items} alerts={alerts} cols={cols} rows={rows} />
+      <CharterPanel card={card} />
 
       <div className="bespoke">
         {/* Stage */}

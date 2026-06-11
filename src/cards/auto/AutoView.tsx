@@ -18,6 +18,7 @@ import {
 } from '../../lib/todoist/hooks';
 import { LoadState } from '../../shell/atoms';
 import { QuickAdd } from '../../shell/QuickAdd';
+import { CharterPanel } from '../../shell/CharterPanel';
 import { dueLabel } from '../../lib/format';
 import './auto.css';
 
@@ -425,6 +426,7 @@ export default function AutoView({ card }: Props) {
             </div>
           </div>
         </div>
+        <CharterPanel card={card} />
         <LoadState status="no-token" />
         <QuickAdd open={quickAddOpen} onClose={() => setQuickAddOpen(false)} presetCardId={card.id} />
       </div>
@@ -509,6 +511,8 @@ export default function AutoView({ card }: Props) {
           </div>
         </div>
       </div>
+
+      <CharterPanel card={card} />
 
       {/* ── bespoke layout ─────────────────────────────────────────────────── */}
       <div className="bespoke">

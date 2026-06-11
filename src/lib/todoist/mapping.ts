@@ -1,4 +1,10 @@
 /**
+ * Label constants for carrier tasks (exported for use in views and tests).
+ * FP-charter: one carrier per card holding the Card Charter markdown.
+ */
+export const LABEL_CHARTER = 'FP-charter';
+
+/**
  * Mapping between raw Todoist API v1 task objects and FpTask.
  *
  * VERIFIED FIELD NOTES (live API 2026-06-11):
