@@ -1,0 +1,434 @@
+/* ============================================================
+   FAIRPLAY · Home Maintenance · Water Filter panel styles
+   Colocated with WaterFilter.tsx; imported only by that component.
+   All colors via CSS custom props; no hardcoded values.
+   Visual language: clean cyberpunk / blueprint.
+   ============================================================ */
+
+/* ── Panel shell ─────────────────────────────────────────── */
+
+.wf-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+
+/* ── Nav bar ─────────────────────────────────────────────── */
+
+.wf-nav {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 10px 26px;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface) 60%, transparent);
+}
+
+.wf-back {
+  font-size: 10px;
+  padding: 5px 10px;
+  white-space: nowrap;
+}
+
+.wf-nav-title {
+  font-size: 10px;
+  color: var(--ink-3);
+  letter-spacing: 0.12em;
+}
+
+/* ── Body: stage + side ──────────────────────────────────── */
+
+.wf-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+/* ── Stage (left — canister SVG) ─────────────────────────── */
+
+.wf-stage {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+  padding: 22px 28px;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--line);
+  background:
+    radial-gradient(circle at 50% 42%, color-mix(in srgb, var(--accent) 5%, transparent), transparent 62%);
+}
+
+.wf-stage-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+  font-size: 9.5px;
+  color: var(--ink-3);
+  letter-spacing: 0.12em;
+}
+
+.wf-stage-foot {
+  display: flex;
+  justify-content: space-between;
+  font-size: 9px;
+  color: var(--ink-4);
+  letter-spacing: 0.1em;
+  margin-top: 8px;
+}
+
+.wf-status-badge {
+  font-size: 9px;
+  padding: 3px 8px;
+  border: 1px solid var(--line);
+  color: var(--ink-3);
+  font-family: "JetBrains Mono", monospace;
+  letter-spacing: 0.1em;
+}
+
+.wf-status-badge.wf-status-ok {
+  border-color: var(--accent-2);
+  color: var(--accent-2);
+}
+
+.wf-status-badge.wf-status-low {
+  border-color: #E0A23A;
+  color: #E0A23A;
+}
+
+.wf-status-badge.wf-status-out {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+/* ── Canister SVG container ──────────────────────────────── */
+
+.wf-canister-wrap {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+}
+
+.wf-canister {
+  max-height: 340px;
+  max-width: 260px;
+  width: 100%;
+  filter: drop-shadow(0 2px 10px rgba(0, 0, 0, 0.2));
+}
+
+/* SVG element classes used inside .wf-canister ─────────── */
+
+.wf-grid {
+  stroke: var(--grid);
+  stroke-width: 1;
+  fill: none;
+}
+
+.wf-housing {
+  stroke: var(--ink-2);
+  stroke-width: 1.6;
+  fill: color-mix(in srgb, var(--surface) 70%, transparent);
+}
+
+.wf-inner {
+  stroke: var(--ink-3);
+  stroke-width: 1;
+  fill: none;
+}
+
+.wf-fill {
+  /* fill set inline via status color */
+  opacity: 0.72;
+  transition: height 0.4s ease, y 0.4s ease;
+}
+
+.wf-cap {
+  stroke: var(--ink-2);
+  stroke-width: 1.4;
+  fill: color-mix(in srgb, var(--surface-3) 80%, transparent);
+}
+
+.wf-cap-thread {
+  stroke: var(--ink-4);
+  stroke-width: 0.7;
+  fill: none;
+  stroke-dasharray: 2 2;
+}
+
+.wf-pipe {
+  stroke: var(--ink-3);
+  stroke-width: 2;
+  fill: none;
+}
+
+.wf-pipe-cap {
+  stroke: var(--ink-2);
+  stroke-width: 1.2;
+  fill: color-mix(in srgb, var(--surface-3) 80%, transparent);
+}
+
+.wf-pipe-lbl {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 6px;
+  fill: var(--ink-4);
+  letter-spacing: 0.08em;
+  text-anchor: middle;
+}
+
+.wf-mount {
+  stroke: var(--ink-3);
+  stroke-width: 1.2;
+  fill: color-mix(in srgb, var(--surface-2) 80%, transparent);
+}
+
+.wf-tick {
+  stroke: var(--ink-4);
+  stroke-width: 1;
+  fill: none;
+}
+
+.wf-tick.active {
+  stroke: var(--ink-3);
+}
+
+.wf-tick-lbl {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 5.5px;
+  fill: var(--ink-4);
+  dominant-baseline: central;
+}
+
+/* Big percent readout */
+.wf-pct {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 22px;
+  font-weight: 700;
+  fill: var(--ink-2);
+  text-anchor: middle;
+  dominant-baseline: central;
+  letter-spacing: -0.01em;
+}
+
+/* Chip background and text */
+.wf-chip-bg {
+  fill: transparent;
+  stroke: var(--line);
+}
+
+.wf-chip-bg.wf-chip-ok {
+  stroke: var(--accent-2);
+}
+
+.wf-chip-bg.wf-chip-low {
+  stroke: #E0A23A;
+}
+
+.wf-chip-bg.wf-chip-out {
+  fill: var(--accent);
+  stroke: var(--accent);
+}
+
+.wf-chip-txt {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 7px;
+  fill: var(--ink-3);
+  text-anchor: middle;
+  dominant-baseline: central;
+  letter-spacing: 0.1em;
+}
+
+.wf-chip-txt.wf-chip-ok { fill: var(--accent-2); }
+.wf-chip-txt.wf-chip-low { fill: #E0A23A; }
+.wf-chip-txt.wf-chip-out { fill: var(--accent-ink); }
+
+/* Title block inside SVG */
+.wf-title-block {
+  stroke: var(--ink-4);
+  stroke-width: 0.7;
+  fill: color-mix(in srgb, var(--surface) 80%, transparent);
+}
+
+.wf-dim {
+  stroke: var(--ink-4);
+  stroke-width: 0.7;
+  fill: none;
+}
+
+.wf-title-txt {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 5.5px;
+  fill: var(--ink-4);
+  letter-spacing: 0.1em;
+  dominant-baseline: hanging;
+  text-anchor: middle;
+}
+
+/* ── Side panel ──────────────────────────────────────────── */
+
+.wf-side {
+  width: 380px;
+  flex: 0 0 380px;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--ink-4) transparent;
+}
+
+.wf-side::-webkit-scrollbar { width: 8px; }
+.wf-side::-webkit-scrollbar-thumb { background: var(--ink-4); }
+
+/* ── Sections ────────────────────────────────────────────── */
+
+.wf-section {
+  padding: 18px 22px;
+  border-bottom: 1px solid var(--line);
+}
+
+.wf-section-head {
+  font-size: 9px;
+  color: var(--ink-4);
+  letter-spacing: 0.14em;
+  margin-bottom: 14px;
+  text-transform: uppercase;
+  font-family: "JetBrains Mono", monospace;
+}
+
+/* ── Readout block ───────────────────────────────────────── */
+
+.wf-readout-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line-2);
+}
+
+.wf-readout-row:last-child {
+  border-bottom: none;
+}
+
+.wf-readout-lbl {
+  font-size: 9.5px;
+  color: var(--ink-3);
+  font-family: "JetBrains Mono", monospace;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.wf-readout-val {
+  font-size: 13px;
+  color: var(--ink);
+  font-family: "JetBrains Mono", monospace;
+  font-weight: 600;
+}
+
+.wf-overdue {
+  color: var(--accent);
+}
+
+/* ── Warning block ───────────────────────────────────────── */
+
+.wf-warning {
+  border-left: 3px solid var(--line);
+}
+
+.wf-warning.wf-warning-low {
+  border-left-color: #E0A23A;
+  background: color-mix(in srgb, #E0A23A 6%, transparent);
+}
+
+.wf-warning.wf-warning-out {
+  border-left-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.wf-warning-head {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  margin-bottom: 8px;
+  font-family: "JetBrains Mono", monospace;
+  color: var(--ink);
+}
+
+.wf-warning-body {
+  font-size: 12px;
+  color: var(--ink-2);
+  margin: 0 0 14px;
+  line-height: 1.5;
+}
+
+.wf-purchase-btn {
+  font-size: 10px;
+  padding: 7px 12px;
+}
+
+.wf-purchase-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* ── Controls ────────────────────────────────────────────── */
+
+.wf-ctrl-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--line-2);
+}
+
+.wf-ctrl-row:last-child {
+  border-bottom: none;
+}
+
+.wf-ctrl-lbl {
+  font-size: 9.5px;
+  color: var(--ink-3);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  font-family: "JetBrains Mono", monospace;
+  flex: 1;
+}
+
+.wf-ctrl-btn {
+  font-size: 9.5px;
+  padding: 5px 10px;
+  white-space: nowrap;
+}
+
+.wf-num-input {
+  width: 70px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  padding: 5px 8px;
+  text-align: right;
+  outline: none;
+}
+
+.wf-num-input:focus {
+  border-color: var(--accent-2);
+}
+
+.wf-date-input {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  padding: 5px 8px;
+  outline: none;
+}
+
+.wf-date-input:focus {
+  border-color: var(--accent-2);
+}

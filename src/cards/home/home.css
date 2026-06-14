@@ -1,7 +1,8 @@
 /* ============================================================
    FAIRPLAY · Home Maintenance card — blueprint styles
    Colocated with HomeView; imported only by this view.
-   All colors via CSS vars; no hardcoded hex values.
+   All colors via CSS vars; no hardcoded hex values
+   (filter health amber #E0A23A is the one purposeful exception).
    ============================================================ */
 
 /* ── Blueprint SVG container ─────────────────────────────── */
@@ -9,20 +10,26 @@
 .blueprint-wrap {
   flex: 1;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
   position: relative;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: var(--ink-4) transparent;
 }
 
 .blueprint {
+  /* Portrait tall SVG: fill stage width, let height auto-expand so the
+     page can scroll to see all 940 viewBox units. */
   width: 100%;
-  max-width: 600px;
-  /* Blueprint paper tint — very subtle surface overlay */
-  filter: drop-shadow(0 2px 12px rgba(0,0,0,.22));
+  max-width: 480px;
+  height: auto;
+  display: block;
+  filter: drop-shadow(0 2px 16px rgba(0,0,0,.22));
 }
 
-/* ── Blueprint grid & wall classes (mirror .schematic lang) ── */
+/* ── Blueprint grid & wall classes ───────────────────────── */
 
 /* Outer double-line wall (thick) */
 .blueprint .wall-outer {
@@ -38,14 +45,7 @@
   fill: none;
 }
 
-/* Interior partition walls */
-.blueprint .wall-int {
-  stroke: var(--ink-3);
-  stroke-width: 1;
-  fill: none;
-}
-
-/* Blueprint grid lines (lighter than schematic grid) */
+/* Blueprint grid lines */
 .blueprint .bp-grid {
   stroke: var(--grid);
   stroke-width: 1;
@@ -97,19 +97,26 @@
 /* ── Room hotspot rectangles ─────────────────────────────── */
 
 .bp-room {
-  cursor: pointer;
   transition: fill 0.15s ease;
 }
 
-/* Default fill — nearly transparent */
+/* Transparent fill — interior border comes from room-border rect below */
 .bp-room .room-fill {
   fill: transparent;
   stroke: none;
   transition: fill 0.15s ease;
 }
 
+/* Interior partition wall strokes (each room rect draws its own walls) */
+.bp-room .room-border {
+  fill: none;
+  stroke: var(--ink-3);
+  stroke-width: 1;
+  pointer-events: none;
+}
+
 /* Hover — lighten slightly */
-.bp-room:hover .room-fill {
+.bp-room:not(.void):hover .room-fill {
   fill: color-mix(in srgb, var(--ink) 5%, transparent);
 }
 
@@ -118,28 +125,49 @@
   fill: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
+/* Void room (shared stairwell) — hatched, not clickable */
+.bp-room.void .room-fill {
+  fill: repeating-linear-gradient(
+    45deg,
+    color-mix(in srgb, var(--ink) 6%, transparent) 0px,
+    color-mix(in srgb, var(--ink) 6%, transparent) 2px,
+    transparent 2px,
+    transparent 8px
+  );
+  /* SVG fill can't use CSS gradients directly — handled via pattern below */
+  fill: color-mix(in srgb, var(--ink) 4%, transparent);
+}
+.bp-room.void .room-border {
+  stroke: var(--ink-4);
+  stroke-dasharray: 4 3;
+}
+.bp-room.void .room-lbl {
+  fill: var(--ink-4);
+  font-size: 6.5px;
+}
+
 /* Exterior zone band */
 .bp-room.exterior .room-fill {
   fill: color-mix(in srgb, var(--ink) 3%, transparent);
 }
-.bp-room.exterior:hover .room-fill {
+.bp-room.exterior:not(.void):hover .room-fill {
   fill: color-mix(in srgb, var(--ink) 7%, transparent);
 }
 .bp-room.exterior.active .room-fill {
   fill: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.bp-room.exterior .room-border {
+  stroke: var(--ink-4);
+  stroke-width: 0.8;
 }
 
 /* Room label — accent when active */
 .bp-room.active .room-lbl {
   fill: var(--accent);
 }
-.bp-room.active .room-lbl-num {
-  fill: var(--accent);
-}
 
 /* ── Task pip badges on rooms ────────────────────────────── */
 
-/* Ink pip (has open tasks) */
 .room-pip {
   transition: opacity 0.15s ease;
 }
@@ -161,6 +189,172 @@
   dominant-baseline: central;
   text-anchor: middle;
   pointer-events: none;
+}
+
+/* ── Bay window flourish ─────────────────────────────────── */
+
+.bp-bay polygon {
+  fill: color-mix(in srgb, var(--accent-2) 6%, transparent);
+  stroke: var(--ink-3);
+  stroke-width: 0.8;
+}
+
+.bp-bay line {
+  stroke: var(--ink-4);
+  stroke-width: 0.6;
+}
+
+/* ── Fixture symbols ─────────────────────────────────────── */
+
+/* Base — all fixtures share this */
+.fx rect,
+.fx polygon {
+  stroke: var(--ink-3);
+  stroke-width: 0.8;
+  fill: color-mix(in srgb, var(--surface-2) 70%, transparent);
+}
+
+/* Fixture label */
+.fx-lbl {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 5.5px;
+  fill: var(--ink-4);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  text-anchor: middle;
+  dominant-baseline: central;
+  pointer-events: none;
+  user-select: none;
+}
+
+/* Sub-item micro-labels inside fixtures */
+.fx-item {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 4.5px;
+  fill: var(--ink-4);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  text-anchor: middle;
+  dominant-baseline: central;
+  pointer-events: none;
+  user-select: none;
+}
+
+/* Appliance — machine grey fill */
+.fx-appliance rect,
+.fx-appliance polygon {
+  fill: color-mix(in srgb, var(--ink) 8%, transparent);
+  stroke: var(--ink-3);
+}
+
+/* Soft furnishings — warm surface fill */
+.fx-soft rect,
+.fx-soft polygon {
+  fill: color-mix(in srgb, var(--surface-3) 80%, transparent);
+  stroke: var(--ink-3);
+  stroke-width: 0.8;
+}
+
+/* Storage — slightly lighter */
+.fx-storage rect,
+.fx-storage polygon {
+  fill: color-mix(in srgb, var(--surface-2) 90%, transparent);
+  stroke: var(--ink-3);
+  stroke-width: 0.8;
+}
+
+/* Plumbing / counters */
+.fx-fixture rect,
+.fx-fixture polygon {
+  fill: color-mix(in srgb, var(--surface) 60%, transparent);
+  stroke: var(--ink-3);
+  stroke-width: 0.8;
+}
+
+/* Bed — thin border, plus pillow line */
+.fx-bed rect,
+.fx-bed polygon {
+  fill: color-mix(in srgb, var(--surface-2) 70%, transparent);
+  stroke: var(--ink-3);
+  stroke-width: 0.8;
+}
+.fx-pillow {
+  stroke: var(--ink-4);
+  stroke-width: 0.8;
+}
+
+/* Play (playpen) — dashed outline, no fill */
+.fx-play polygon,
+.fx-play rect {
+  fill: none;
+  stroke: var(--ink-4);
+  stroke-width: 0.8;
+  stroke-dasharray: 3 2;
+}
+.fx-play-outline polygon,
+.fx-play-outline rect {
+  fill: none;
+  stroke: var(--ink-4);
+  stroke-width: 0.8;
+  stroke-dasharray: 3 2;
+}
+
+/* Filter — the tracked water cartridge */
+.fx-filter rect {
+  fill: color-mix(in srgb, var(--accent-2) 10%, transparent);
+  stroke: var(--accent-2);
+  stroke-width: 0.9;
+}
+.fx-filter:hover rect {
+  fill: color-mix(in srgb, var(--accent-2) 18%, transparent);
+}
+
+/* Filter health ring track (background circle) */
+.fx-filter-track {
+  fill: none;
+  stroke: var(--line);
+  stroke-width: 2.2;
+}
+
+/* Filter health arc (colored, drawn over track) */
+.fx-filter-arc {
+  stroke-width: 2.2;
+  stroke-linecap: round;
+}
+
+/* ── Level toggle ────────────────────────────────────────── */
+
+.level-toggle {
+  display: flex;
+  border: 1px solid var(--line);
+}
+
+.level-toggle button {
+  padding: 4px 10px;
+  font-size: 9px;
+  color: var(--ink-3);
+  border: 0;
+  border-right: 1px solid var(--line);
+  background: transparent;
+  cursor: pointer;
+  font-family: "JetBrains Mono", monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+
+.level-toggle button:last-child {
+  border-right: 0;
+}
+
+.level-toggle button.active {
+  background: var(--ink);
+  color: var(--bg);
+}
+
+.level-toggle button:not(.active):hover {
+  background: color-mix(in srgb, var(--ink) 10%, transparent);
+  color: var(--ink-2);
 }
 
 /* ── Side panel extras ────────────────────────────────────── */
@@ -211,6 +405,23 @@
   color: var(--ink-4);
   letter-spacing: 0.12em;
   text-transform: uppercase;
+}
+
+/* Filter health chip in the stage head (distinct from the side-panel zone chip) */
+.filter-health-chip {
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  background: transparent;
+  cursor: pointer;
+  font-size: 9px;
+  padding: 3px 8px;
+  font-family: "JetBrains Mono", monospace;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.filter-health-chip:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
 /* Card number glyph */

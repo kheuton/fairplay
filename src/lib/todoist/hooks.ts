@@ -217,13 +217,38 @@ export function useCardConfig(cardId: string): {
       `/api/v1/tasks?project_id=${card.todoistId}&limit=200`
     );
     const configTask = tasks.find((t) => t.labels.includes(LABEL_CONFIG));
-    const current = query.data ?? {};
-    const next = { ...current, ...patch };
+
+    // Source `current` from the freshly-fetched carrier so we don't clobber
+    // sibling config keys that were written by another device/tab after our
+    // last cache hydration. Falls back to the query cache only when no carrier
+    // exists yet (first write).
+    const { meta: fetchedMeta, clean: fetchedClean } = configTask
+      ? parseFp(configTask.description ?? '')
+      : { meta: {}, clean: `FairPlay config - ${cardId}` };
+    const current = configTask
+      ? ((fetchedMeta.config as Record<string, unknown>) ?? {})
+      : (query.data ?? {});
+
+    // Deep-merge nested objects (e.g. waterFilter) so a concurrent write to a
+    // sibling key isn't silently overwritten when patch carries the same top-level
+    // key. We merge patch into current at the top level, and for each key whose
+    // value is a plain object in both current and patch, we merge one level deeper.
+    const next: Record<string, unknown> = { ...current };
+    for (const [k, v] of Object.entries(patch)) {
+      const cur = current[k];
+      if (
+        v !== null && typeof v === 'object' && !Array.isArray(v) &&
+        cur !== null && typeof cur === 'object' && !Array.isArray(cur)
+      ) {
+        next[k] = { ...(cur as Record<string, unknown>), ...(v as Record<string, unknown>) };
+      } else {
+        next[k] = v;
+      }
+    }
 
     if (configTask) {
-      // Update existing config carrier
-      const { clean } = parseFp(configTask.description ?? '');
-      const newDesc = withFp(clean, { config: next });
+      // Update existing config carrier using the fetched clean text
+      const newDesc = withFp(fetchedClean, { config: next });
       await todoistPost(`/api/v1/tasks/${configTask.id}`, { description: newDesc });
     } else {
       // Create new config carrier
@@ -791,6 +816,94 @@ export function useAbsorbCharter(): UseMutationResult<
       void qc.invalidateQueries({ queryKey: ['fp-completed'] });
     },
   });
+}
+
+// ---------------------------------------------------------------------------
+// Water-filter hook
+// ---------------------------------------------------------------------------
+
+import {
+  normalizeFilter,
+  filterStatus,
+  filterDaysLeft,
+  filterLifeFrac,
+  filterPct,
+  filterChip,
+  filterReplaceBy,
+  filterDateLabel,
+  type FilterState,
+} from '../filter-health';
+
+export type { FilterState };
+
+export interface UseWaterFilterResult {
+  state: FilterState;
+  status: 'ok' | 'low' | 'out';
+  daysLeft: number;
+  lifeFrac: number;
+  pct: number;
+  replaceByLabel: string;
+  chip: string;
+  isLoading: boolean;
+  markReplaced: () => void;
+  setLifespan: (days: number) => void;
+  setInstalled: (date: string) => void;
+  setWarnDays: (n: number) => void;
+}
+
+/**
+ * Derives water-filter health state from the card's FP-config carrier.
+ * config.waterFilter (unknown) is coerced via normalizeFilter.
+ * Mutations update the config in-place (fully reversible, no destructive writes).
+ */
+export function useWaterFilter(cardId: string): UseWaterFilterResult {
+  const { config, update, isLoading } = useCardConfig(cardId);
+  const now = new Date();
+
+  const raw = config.waterFilter as Partial<FilterState> | undefined;
+  const state = normalizeFilter(raw, now);
+
+  const status = filterStatus(state, now);
+  const daysLeft = filterDaysLeft(state, now);
+  const lifeFrac = filterLifeFrac(state, now);
+  const pct = filterPct(state, now);
+  const chip = filterChip(state, now);
+  const replaceByLabel = filterDateLabel(filterReplaceBy(state));
+
+  // Each mutator sends only the changed field. The update() function deep-merges
+  // the patch into the latest persisted waterFilter (read from the freshly-fetched
+  // carrier), preventing the lost-update race that would occur if two blurs fire
+  // before the first POST returns and both spread the same stale rendered `state`.
+  function markReplaced(): void {
+    void update({ waterFilter: { installed: localDateString() } });
+  }
+
+  function setLifespan(days: number): void {
+    void update({ waterFilter: { lifespanDays: days } });
+  }
+
+  function setInstalled(date: string): void {
+    void update({ waterFilter: { installed: date } });
+  }
+
+  function setWarnDays(n: number): void {
+    void update({ waterFilter: { warnDays: n } });
+  }
+
+  return {
+    state,
+    status,
+    daysLeft,
+    lifeFrac,
+    pct,
+    replaceByLabel,
+    chip,
+    isLoading,
+    markReplaced,
+    setLifespan,
+    setInstalled,
+    setWarnDays,
+  };
 }
 
 // ---------------------------------------------------------------------------
