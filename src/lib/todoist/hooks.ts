@@ -397,6 +397,28 @@ export function useCloseTask(): UseMutationResult<void, Error, string> {
   });
 }
 
+export function useDeleteItem(): UseMutationResult<void, Error, string> {
+  const qc = useQueryClient();
+  return useMutation<void, Error, string>({
+    mutationFn: async (taskId: string): Promise<void> => {
+      await todoistDelete(`/api/v1/tasks/${taskId}`);
+    },
+    onMutate: async (taskId) => {
+      await qc.cancelQueries({ queryKey: ['fp-tasks'] });
+      const prev = qc.getQueryData<FpTask[]>(['fp-tasks']);
+      qc.setQueryData<FpTask[]>(['fp-tasks'], (old) => old?.filter((t) => t.id !== taskId));
+      return { prev };
+    },
+    onError: (_err, _id, ctx) => {
+      const c = ctx as { prev?: FpTask[] } | undefined;
+      if (c?.prev) qc.setQueryData(['fp-tasks'], c.prev);
+    },
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: ['fp-tasks'] });
+    },
+  });
+}
+
 /**
  * Reopen a completed task.
  * Optimistic update: the task isn't currently in the open-tasks cache (it was

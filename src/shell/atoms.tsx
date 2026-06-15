@@ -118,6 +118,94 @@ export function Stp({ label, dec, inc }: StpProps) {
   );
 }
 
+// ─── StpNum (Editable numeric stepper) ──────────────────────────────────────
+
+interface StpNumProps {
+  value: number;
+  /**
+   * Called when the − button is clicked.  Receives the current effective
+   * numeric base (draft value when the user is mid-edit, otherwise `value`)
+   * so the step can be applied to whatever the user has already typed.
+   */
+  dec: (base: number) => void;
+  /**
+   * Called when the + button is clicked.  Same semantics as `dec`.
+   */
+  inc: (base: number) => void;
+  /** Commit a directly-typed (and parsed) value. */
+  onCommit: (n: number) => void;
+  /** Clamp bounds for typed input. */
+  min?: number;
+  max?: number;
+  /** Display formatter for the committed value (default String). */
+  format?: (n: number) => string;
+}
+
+export function StpNum({ value, dec, inc, onCommit, min = 0, max = 9999, format }: StpNumProps) {
+  const display = format ? format(value) : String(value);
+  // draft===null means "not editing, mirror the prop"; a string means an in-progress edit.
+  const [draft, setDraft] = React.useState<string | null>(null);
+  const text = draft ?? display;
+
+  // Ref that suppresses the next blur→commit when Escape was pressed.
+  const cancelRef = React.useRef(false);
+
+  // When the prop value changes (server round-trip lands), clear the draft if it
+  // still matches what we committed — this bridges the optimistic gap and prevents
+  // "committed value flashes back to stale prop" flicker.
+  React.useEffect(() => {
+    setDraft(null);
+  }, [value]);
+
+  const commit = () => {
+    if (cancelRef.current) {
+      cancelRef.current = false;
+      setDraft(null);
+      return;
+    }
+    if (draft === null) return;
+    const n = parseFloat(draft);
+    if (Number.isFinite(n)) {
+      const clamped = Math.min(max, Math.max(min, n));
+      // Keep the committed string as draft until the new `value` prop arrives,
+      // so the field doesn't revert to the old number during network latency.
+      setDraft(String(clamped));
+      onCommit(clamped);
+    } else {
+      setDraft(null); // invalid input — revert to prop
+    }
+  };
+
+  // Resolve the current numeric base for step operations: use draft when editing
+  // so that clicking +/- after typing doesn't silently discard the typed value.
+  const draftNum = draft !== null ? parseFloat(draft) : NaN;
+  const stepBase = Number.isFinite(draftNum) ? draftNum : value;
+
+  return (
+    <div className="stp">
+      <button type="button" onClick={() => { setDraft(null); dec(stepBase); }}>−</button>
+      <input
+        className="stp-in mono"
+        type="text"
+        inputMode="decimal"
+        value={text}
+        onChange={(e) => setDraft(e.target.value)}
+        onFocus={(e) => e.currentTarget.select()}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') e.currentTarget.blur();
+          else if (e.key === 'Escape') {
+            cancelRef.current = true;
+            setDraft(null);
+            e.currentTarget.blur();
+          }
+        }}
+      />
+      <button type="button" onClick={() => { setDraft(null); inc(stepBase); }}>+</button>
+    </div>
+  );
+}
+
 // ─── Chip ────────────────────────────────────────────────────────────────────
 
 interface ChipProps {

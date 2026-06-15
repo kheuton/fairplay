@@ -14,6 +14,7 @@ import {
   useCreateTask,
   useSeedInventory,
   useCloseTask,
+  useDeleteItem,
 } from '../../lib/todoist/hooks';
 import { useSettings } from '../../state/settings';
 import {
@@ -28,7 +29,7 @@ import {
   normalizeInvMeta,
 } from '../../lib/inventory-math';
 import { ItemIcon, ICON_ORDER, ICON_LIB } from '../../shell/icons';
-import { SideTaskRow, Stp, LoadState } from '../../shell/atoms';
+import { SideTaskRow, Stp, StpNum, LoadState } from '../../shell/atoms';
 import { CharterPanel } from '../../shell/CharterPanel';
 import { format } from 'date-fns';
 import { getSeedDef } from './seeds';
@@ -340,17 +341,26 @@ interface InvDetailProps {
   onClose: () => void;
   onUpdateMeta: (taskId: string, patch: Partial<InvMeta>) => void;
   onAttest: (taskId: string, count: number) => void;
+  onDelete: (taskId: string) => void;
 }
 
-function InvDetail({ item, onClose, onUpdateMeta, onAttest }: InvDetailProps) {
+function InvDetail({ item, onClose, onUpdateMeta, onAttest, onDelete }: InvDetailProps) {
   const { inv } = item;
   const est = invEst(inv);
   const st = invStatus(inv);
   const [logN, setLogN] = useState(inv.count);
+  const [confirmDel, setConfirmDel] = useState(false);
 
+  // Resync the log field whenever the verified count changes (incl. background refetch).
   useEffect(() => {
     setLogN(inv.count);
-  }, [item.taskId, inv.count]);
+  }, [inv.count]);
+
+  // Collapse the delete-confirm only when switching to a different item — a count
+  // refetch for the SAME item must not yank the confirm out from under the user.
+  useEffect(() => {
+    setConfirmDel(false);
+  }, [item.taskId]);
 
   const w = inv.warn ?? { mode: 'days' as const, value: 7 };
   const rstep = inv.rate.n <= 1 ? 0.1 : inv.rate.n <= 5 ? 0.5 : 1;
@@ -423,10 +433,13 @@ function InvDetail({ item, onClose, onUpdateMeta, onAttest }: InvDetailProps) {
         <div className="cfg-row">
           <span className="lbl">BURN RATE</span>
           <div style={{ display: 'flex', gap: 8 }}>
-            <Stp
-              label={String(inv.rate.n)}
-              dec={() => setRate(inv.rate.n - rstep)}
-              inc={() => setRate(inv.rate.n + rstep)}
+            <StpNum
+              value={inv.rate.n}
+              dec={(base) => setRate(base - rstep)}
+              inc={(base) => setRate(base + rstep)}
+              onCommit={(n) => onUpdateMeta(item.taskId, { rate: { ...inv.rate, n: Math.max(0.1, Math.round(n * 10) / 10) } })}
+              min={0.1}
+              max={999}
             />
             <div className="seg mini">
               {(['day', 'week', 'month'] as const).map((p) => (
@@ -445,18 +458,13 @@ function InvDetail({ item, onClose, onUpdateMeta, onAttest }: InvDetailProps) {
         </div>
         <div className="cfg-row">
           <span className="lbl">STACK SIZE</span>
-          <Stp
-            label={String(inv.stack)}
-            dec={() =>
-              onUpdateMeta(item.taskId, {
-                stack: Math.max(1, inv.stack - (inv.stack > 20 ? 5 : 1)),
-              })
-            }
-            inc={() =>
-              onUpdateMeta(item.taskId, {
-                stack: inv.stack + (inv.stack >= 20 ? 5 : 1),
-              })
-            }
+          <StpNum
+            value={inv.stack}
+            dec={(base) => onUpdateMeta(item.taskId, { stack: Math.max(1, base - (base > 20 ? 5 : 1)) })}
+            inc={(base) => onUpdateMeta(item.taskId, { stack: base + (base >= 20 ? 5 : 1) })}
+            onCommit={(n) => onUpdateMeta(item.taskId, { stack: Math.max(1, Math.round(n)) })}
+            min={1}
+            max={9999}
           />
         </div>
         <div className="cfg-row">
@@ -484,27 +492,13 @@ function InvDetail({ item, onClose, onUpdateMeta, onAttest }: InvDetailProps) {
                 ≤ COUNT
               </button>
             </div>
-            <Stp
-              label={String(w.value)}
-              dec={() =>
-                onUpdateMeta(item.taskId, {
-                  warn: {
-                    ...w,
-                    value: Math.max(
-                      w.mode === 'count' ? 0.5 : 1,
-                      w.value - (w.mode === 'count' ? 0.5 : 1),
-                    ),
-                  },
-                })
-              }
-              inc={() =>
-                onUpdateMeta(item.taskId, {
-                  warn: {
-                    ...w,
-                    value: w.value + (w.mode === 'count' ? 0.5 : 1),
-                  },
-                })
-              }
+            <StpNum
+              value={w.value}
+              dec={(base) => onUpdateMeta(item.taskId, { warn: { ...w, value: Math.max(w.mode === 'count' ? 0.5 : 1, base - (w.mode === 'count' ? 0.5 : 1)) } })}
+              inc={(base) => onUpdateMeta(item.taskId, { warn: { ...w, value: base + (w.mode === 'count' ? 0.5 : 1) } })}
+              onCommit={(n) => onUpdateMeta(item.taskId, { warn: { ...w, value: w.mode === 'count' ? Math.max(0.5, Math.round(n * 2) / 2) : Math.max(1, Math.round(n)) } })}
+              min={w.mode === 'count' ? 0.5 : 1}
+              max={9999}
             />
           </div>
         </div>
@@ -543,6 +537,21 @@ function InvDetail({ item, onClose, onUpdateMeta, onAttest }: InvDetailProps) {
         BURNS {invRateLabel(inv)} · VERIFIED {inv.count} ON{' '}
         {invDateLabel(inv.verified)} · EST {invFmt(est)} TODAY · RUNS OUT{' '}
         {invRunout(inv)}
+      </div>
+
+      {/* Danger zone */}
+      <div className="inv-danger">
+        {confirmDel ? (
+          <div className="inv-danger-confirm">
+            <span className="mono up-s warn-txt">REMOVE "{item.name}" PERMANENTLY?</span>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className="btn danger" style={{ flex: 1, justifyContent: 'center' }} onClick={() => onDelete(item.taskId)}>DELETE</button>
+              <button className="btn ghost" onClick={() => setConfirmDel(false)}>CANCEL</button>
+            </div>
+          </div>
+        ) : (
+          <button className="btn ghost inv-danger-btn" onClick={() => setConfirmDel(true)}>REMOVE ITEM</button>
+        )}
       </div>
     </div>
   );
@@ -752,6 +761,7 @@ export default function InventoryView({ card }: Props) {
   const cardTasksQuery = useCardTasks(card.id);
   const updateItemMeta = useUpdateItemMeta();
   const attestItem = useAttestItem();
+  const deleteItem = useDeleteItem();
   const seedInv = useSeedInventory();
   const closeTask = useCloseTask();
   const { invDisplay } = useSettings();
@@ -819,6 +829,11 @@ export default function InventoryView({ card }: Props) {
     },
     [attestItem],
   );
+
+  const handleDelete = useCallback((taskId: string) => {
+    deleteItem.mutate(taskId);
+    setSel(null);
+  }, [deleteItem]);
 
   const handleDropPos = useCallback(
     (taskId: string, x: number, y: number) => {
@@ -1033,6 +1048,7 @@ export default function InventoryView({ card }: Props) {
               onClose={() => setSel(null)}
               onUpdateMeta={handleUpdateMeta}
               onAttest={handleAttest}
+              onDelete={handleDelete}
             />
           ) : (
             <>

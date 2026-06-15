@@ -46,3 +46,10 @@
 .stage-foot {
   align-items: center;
 }
+
+/* Danger zone — remove item */
+.inv-danger { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line-2); }
+.inv-danger-btn { width: 100%; justify-content: center; color: var(--ink-3); }
+.inv-danger-btn:hover { color: var(--accent); border-color: var(--accent); }
+.inv-danger-confirm { display: flex; flex-direction: column; gap: 8px; }
+.inv-danger-confirm .warn-txt { color: var(--accent); font-size: 9px; letter-spacing: .08em; }

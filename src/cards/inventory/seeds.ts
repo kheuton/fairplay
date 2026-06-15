@@ -58,7 +58,6 @@ function buildSeeds(today: string): Record<string, SeedDef> {
       items: [
         makeItem('Kitchen Bags · 13 gal', 'trashbag',   2, 1, 0, 0, 90, 34, 1,   'day',   'days',  7, today),
         makeItem('Compost Liners',        'compostbag', 1, 1, 2, 0, 50, 9,  1,   'day',   'days',  7, today),
-        makeItem('Contractor Bags',       'trashbag',   1, 1, 3, 1, 10, 6,  0.5, 'month', 'count', 1, today),
       ],
     },
     'Pharmacy': {

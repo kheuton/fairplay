@@ -216,6 +216,9 @@ body { background: #0a0a0a; font-family: "Space Grotesk", system-ui, sans-serif;
 .btn:hover { opacity: .88; }
 .btn.ghost { background: transparent; color: var(--ink); }
 .btn.coral { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+/* Danger/destructive action — outlined red, visually distinct from .btn.coral primary */
+.btn.danger { background: transparent; border-color: var(--accent); color: var(--accent); }
+.btn.danger:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
 
 /* group label */
 .grp { display: flex; align-items: center; gap: 13px; margin: 2px 0 10px; font-size: 10px; color: var(--ink-3); }
@@ -470,6 +473,8 @@ button.chk {
 .stp button { width: 26px; height: 28px; background: transparent; border: 0; color: var(--ink-2); cursor: pointer; font-size: 14px; font-family: "JetBrains Mono", monospace; }
 .stp button:hover { background: var(--surface-3); color: var(--ink); }
 .stp span { min-width: 38px; text-align: center; font-size: 11.5px; }
+.stp .stp-in { width: 38px; min-width: 38px; box-sizing: border-box; text-align: center; font-size: 11.5px; height: 28px; padding: 0; background: transparent; border: 0; color: var(--ink); outline: none; font-family: "JetBrains Mono", monospace; }
+.stp .stp-in:focus { background: var(--surface-3); }
 .seg.mini > button { padding: 5px 8px; font-size: 9px; }
 
 .icon-pick { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; }
