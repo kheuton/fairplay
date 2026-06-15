@@ -7,6 +7,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useDeck, useCreateTask } from '../lib/todoist/hooks';
 import type { CardDef } from '../lib/types';
+import { RecurPicker } from './RecurPicker';
 
 interface QuickAddProps {
   open: boolean;
@@ -147,14 +148,8 @@ export function QuickAdd({ open, onClose, presetCardId }: QuickAddProps) {
 
           {/* Due */}
           <div className="qa-field">
-            <label className="qa-label mono up-s">DUE</label>
-            <input
-              className="qa-input mono"
-              placeholder="tomorrow 8pm, every friday..."
-              value={due}
-              onChange={(e) => setDue(e.target.value)}
-              autoComplete="off"
-            />
+            <label className="qa-label mono up-s">DUE / REPEAT</label>
+            <RecurPicker value={due} onChange={setDue} />
           </div>
 
           {/* Error */}

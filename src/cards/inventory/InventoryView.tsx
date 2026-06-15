@@ -31,6 +31,7 @@ import {
 import { ItemIcon, ICON_ORDER, ICON_LIB } from '../../shell/icons';
 import { SideTaskRow, Stp, StpNum, LoadState } from '../../shell/atoms';
 import { CharterPanel } from '../../shell/CharterPanel';
+import { QuickAdd } from '../../shell/QuickAdd';
 import { format } from 'date-fns';
 import { getSeedDef } from './seeds';
 import './inventory.css';
@@ -617,6 +618,7 @@ interface InvSidePanelProps {
   cardId: string;
   onPick: (id: string) => void;
   onToggleTask: (taskId: string) => void;
+  onAddTask: () => void;
 }
 
 function InvSidePanel({
@@ -625,6 +627,7 @@ function InvSidePanel({
   cardId,
   onPick,
   onToggleTask,
+  onAddTask,
 }: InvSidePanelProps) {
   const createTask = useCreateTask();
   const [creatingFor, setCreatingFor] = useState<string | null>(null);
@@ -674,8 +677,14 @@ function InvSidePanel({
         />
       ))}
       <div className="peek-label mono up" style={{ marginTop: 24 }}>
-        <span>TASKS</span>
-        <span>{cardTasks.length}</span>
+        <span>TASKS · {cardTasks.length}</span>
+        <button
+          className="btn ghost"
+          style={{ padding: '2px 8px', fontSize: 8, letterSpacing: '.06em' }}
+          onClick={onAddTask}
+        >
+          + NEW TASK
+        </button>
       </div>
       <div className="tlist">
         {cardTasks.map((t) => (
@@ -769,6 +778,7 @@ export default function InventoryView({ card }: Props) {
   const [sel, setSel] = useState<string | null>(null);
   const [showVer, setShowVer] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
+  const [qaOpen, setQaOpen] = useState(false);
   // Incrementing counter used to force a re-render when posOverridesRef changes.
   const [, setPosOverrideTick] = useState(0);
 
@@ -934,8 +944,12 @@ export default function InventoryView({ card }: Props) {
                 + ADD SUPPLY
               </button>
             )}
+            <button className="btn ghost" onClick={() => setQaOpen(true)} style={{ marginTop: 6 }}>
+              + ADD TASK
+            </button>
           </div>
         </div>
+        <QuickAdd open={qaOpen} onClose={() => setQaOpen(false)} presetCardId={card.id} />
       </div>
     );
   }
@@ -1064,11 +1078,13 @@ export default function InventoryView({ card }: Props) {
                 cardId={card.id}
                 onPick={setSel}
                 onToggleTask={handleToggleTask}
+                onAddTask={() => setQaOpen(true)}
               />
             </>
           )}
         </div>
       </div>
+      <QuickAdd open={qaOpen} onClose={() => setQaOpen(false)} presetCardId={card.id} />
     </div>
   );
 }

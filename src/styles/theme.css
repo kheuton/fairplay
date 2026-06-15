@@ -577,6 +577,37 @@ button.chk {
   padding-top: 4px;
 }
 
+/* Recurrence picker (inside QuickAdd) */
+.recur { display: flex; flex-direction: column; gap: 10px; }
+.recur-presets { display: flex; gap: 6px; flex-wrap: wrap; }
+.recur-chip {
+  background: var(--surface-2); border: 1px solid var(--line); color: var(--ink-2);
+  font-family: "JetBrains Mono", monospace; font-size: 9px; letter-spacing: .08em;
+  padding: 5px 9px; cursor: pointer;
+}
+.recur-chip:hover { border-color: var(--ink-3); color: var(--ink); }
+.recur-chip.on { background: var(--ink); border-color: var(--ink); color: var(--bg); }
+.recur-week { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.recur-week-lbl { font-size: 9px; color: var(--ink-3); flex: 0 0 auto; }
+.recur-days { display: flex; gap: 4px; }
+.recur-day {
+  width: 30px; height: 28px; background: var(--surface-2);
+  border: 1px solid var(--line); color: var(--ink-2);
+  font-family: "JetBrains Mono", monospace; font-size: 9.5px; cursor: pointer;
+}
+.recur-day[disabled] { opacity: .5; cursor: default; }
+.recur-time:disabled { opacity: .45; cursor: not-allowed; }
+.recur-day:hover { border-color: var(--ink-3); color: var(--ink); }
+.recur-day.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.recur-time {
+  width: 60px; background: var(--surface-2); border: 1px solid var(--line);
+  color: var(--ink); padding: 6px 8px; font-size: 10px; outline: none;
+  font-family: "JetBrains Mono", monospace;
+}
+.recur-time:focus { border-color: var(--ink-3); }
+.recur-time::placeholder { color: var(--ink-4); }
+.recur-text { font-size: 13px; }
+
 /* ============================================================
    SETTINGS PAGE extras
    ============================================================ */
