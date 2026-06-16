@@ -610,6 +610,43 @@ function RestockAlertRow({
   );
 }
 
+// ─── CardTasksSection (shared by side panel + empty state) ───────────────────
+
+interface CardTasksSectionProps {
+  tasks: FpTask[];
+  onAddTask: () => void;
+  onToggleTask: (taskId: string) => void;
+}
+
+/** The "TASKS · N" list with a + NEW TASK action. Rendered both in the populated
+ *  side panel and in the empty-inventory state, so a card's regular tasks are
+ *  never hidden just because no supplies are tracked yet. */
+function CardTasksSection({ tasks, onAddTask, onToggleTask }: CardTasksSectionProps) {
+  return (
+    <>
+      <div className="peek-label mono up" style={{ marginTop: 24 }}>
+        <span>TASKS · {tasks.length}</span>
+        <button
+          className="btn ghost"
+          style={{ padding: '2px 8px', fontSize: 8, letterSpacing: '.06em' }}
+          onClick={onAddTask}
+        >
+          + NEW TASK
+        </button>
+      </div>
+      {tasks.length === 0 ? (
+        <div className="rs-empty">NO OPEN TASKS</div>
+      ) : (
+        <div className="tlist">
+          {tasks.map((t) => (
+            <SideTaskRow key={t.id} task={t} onToggle={() => onToggleTask(t.id)} />
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
 // ─── InvSidePanel ─────────────────────────────────────────────────────────────
 
 interface InvSidePanelProps {
@@ -676,25 +713,11 @@ function InvSidePanel({
           isCreatingRestock={creatingFor === it.taskId}
         />
       ))}
-      <div className="peek-label mono up" style={{ marginTop: 24 }}>
-        <span>TASKS · {cardTasks.length}</span>
-        <button
-          className="btn ghost"
-          style={{ padding: '2px 8px', fontSize: 8, letterSpacing: '.06em' }}
-          onClick={onAddTask}
-        >
-          + NEW TASK
-        </button>
-      </div>
-      <div className="tlist">
-        {cardTasks.map((t) => (
-          <SideTaskRow
-            key={t.id}
-            task={t}
-            onToggle={() => onToggleTask(t.id)}
-          />
-        ))}
-      </div>
+      <CardTasksSection
+        tasks={cardTasks}
+        onAddTask={onAddTask}
+        onToggleTask={onToggleTask}
+      />
     </div>
   );
 }
@@ -917,7 +940,7 @@ export default function InventoryView({ card }: Props) {
         <ViewHead card={card} items={[]} alerts={0} cols={6} rows={3} />
         <CharterPanel card={card} />
         <div className="view-body">
-          <div className="inv-empty-panel">
+          <div className={`inv-empty-panel${cardTasks.length > 0 ? ' has-tasks' : ''}`}>
             <div className="mono up" style={{ fontSize: 10, color: 'var(--ink-3)', marginBottom: 16 }}>
               NO SUPPLIES TRACKED
             </div>
@@ -944,9 +967,20 @@ export default function InventoryView({ card }: Props) {
                 + ADD SUPPLY
               </button>
             )}
-            <button className="btn ghost" onClick={() => setQaOpen(true)} style={{ marginTop: 6 }}>
-              + ADD TASK
-            </button>
+            {cardTasks.length === 0 && (
+              <button className="btn ghost" onClick={() => setQaOpen(true)} style={{ marginTop: 6 }}>
+                + ADD TASK
+              </button>
+            )}
+            {cardTasks.length > 0 && (
+              <div className="inv-empty-tasks">
+                <CardTasksSection
+                  tasks={cardTasks}
+                  onAddTask={() => setQaOpen(true)}
+                  onToggleTask={handleToggleTask}
+                />
+              </div>
+            )}
           </div>
         </div>
         <QuickAdd open={qaOpen} onClose={() => setQaOpen(false)} presetCardId={card.id} />
