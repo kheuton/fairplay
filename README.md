@@ -112,12 +112,22 @@ Density variants (`compact` | `regular` | `comfy`) adjust row heights and spacin
 
 ---
 
+## Deployment
+
+Pushing to `main` triggers `.github/workflows/deploy.yml`, which builds the app and publishes the static SPA to GitHub Pages at **https://kheuton.github.io/fairplay/**.
+
+- The production build talks directly to `https://api.todoist.com` from the browser (CORS is enabled on the Todoist API — no server-side proxy required).
+- Each user enters their own Todoist API token in the Settings page; it is stored in `localStorage` and never sent anywhere except Todoist.
+- **Never set `VITE_TODOIST_API_TOKEN` in CI or GitHub Actions secrets.** Doing so would bake your personal token into the public JavaScript bundle.
+
+---
+
 ## Security
 
 **Your token never leaves your machine during development.**
 
 - Stored in `localStorage` (via the Settings page) or in `.env.local` (gitignored).
-- All browser-to-Todoist API calls go through the local Vite dev server proxy (`/todoist-api` → `https://api.todoist.com`), avoiding CORS and ensuring the token travels only over your local loopback.
-- The production build also configures the Vite preview proxy identically. For a real deployment behind a server, set up a server-side proxy and inject the token server-side rather than shipping it to the browser.
+- In **development**, browser-to-Todoist API calls go through the local Vite dev server proxy (`/todoist-api` → `https://api.todoist.com`), so the token travels only over your local loopback.
+- In **production** (the static build served from GitHub Pages), the app calls the Todoist API **directly** from the browser (`https://api.todoist.com`). This works because Todoist's API is CORS-enabled — no server-side proxy is needed. The token is supplied per-user via the Settings page (stored in `localStorage`). `VITE_TODOIST_API_TOKEN` must **never** be set in CI or production, as it would bake a token into the public bundle.
 - The app never logs the token to the console.
 - Carrier tasks (`FP-item`, `FP-config`) and metadata (`FP::`) are written to your **own** Todoist account only — no external service is involved beyond Todoist itself.

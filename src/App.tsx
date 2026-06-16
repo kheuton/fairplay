@@ -8,7 +8,7 @@
  */
 import React, { Suspense, useEffect, Component, type ErrorInfo, type ReactNode } from 'react';
 import {
-  BrowserRouter,
+  HashRouter,
   Routes,
   Route,
   useParams,
@@ -183,7 +183,7 @@ export default function App() {
   }, []);
 
   return (
-    <BrowserRouter>
+    <HashRouter>
       <QueryClientProvider client={queryClient}>
         <div
           className="app"
@@ -194,6 +194,6 @@ export default function App() {
           <AppShell />
         </div>
       </QueryClientProvider>
-    </BrowserRouter>
+    </HashRouter>
   );
 }

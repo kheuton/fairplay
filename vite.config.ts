@@ -1,7 +1,11 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-export default defineConfig({
+// Project site is served from https://kheuton.github.io/fairplay/, so the
+// production build needs a '/fairplay/' base for asset URLs. Dev & preview stay
+// at root so the local dev server keeps working at http://localhost:5173/.
+export default defineConfig(({ mode }) => ({
+  base: mode === 'production' ? '/fairplay/' : '/',
   plugins: [react()],
   server: {
     proxy: {
@@ -25,4 +29,4 @@ export default defineConfig({
     environment: 'node',
     include: ['src/**/*.test.ts'],
   },
-});
+}));

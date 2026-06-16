@@ -7,6 +7,9 @@ dist-ssr/
 .env
 .env.*
 *.local
+# …except .env.production: a public, non-secret config (VITE_TODOIST_BASE only)
+# that CI needs at build time. NEVER put a token here — it ships in the bundle.
+!.env.production
 
 # logs & tool state
 logs/
