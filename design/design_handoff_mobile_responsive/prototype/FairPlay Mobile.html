@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>FairPlay · Mobile</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="mobile-theme.css" />
+<style>
+  html, body { margin: 0; height: 100%; background: #07070b; }
+  #root { min-height: 100%; display: flex; align-items: center; justify-content: center; }
+  .stage { display: flex; align-items: center; justify-content: center; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script type="text/babel" src="tweaks-panel.jsx"></script>
+<script type="text/babel" src="ios-frame.jsx"></script>
+<script type="text/babel" src="mobile-data.jsx"></script>
+<script type="text/babel" src="mobile-parts.jsx"></script>
+<script type="text/babel" src="mobile-screens.jsx"></script>
+
+<script type="text/babel">
+const { useState, useEffect, useRef } = React;
+
+const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+  "theme": "Vapor",
+  "accent": "#E0A23A",
+  "density": "compact",
+  "showGrid": true,
+  "nav": "drawer",
+  "addModel": "fab"
+}/*EDITMODE-END*/;
+
+let __ex = 0;
+
+/* scale the fixed 402×874 device to fit any viewport */
+function DeviceStage({ children }) {
+  const [scale, setScale] = useState(1);
+  useEffect(() => {
+    const fit = () => {
+      const s = Math.min(1, (window.innerWidth - 24) / 402, (window.innerHeight - 24) / 874);
+      setScale(s > 0 ? s : 1);
+    };
+    fit();
+    window.addEventListener("resize", fit);
+    return () => window.removeEventListener("resize", fit);
+  }, []);
+  return (
+    <div className="stage" style={{ width: 402*scale, height: 874*scale }}>
+      <div style={{ transform:`scale(${scale})`, transformOrigin:"top left", width:402, height:874 }}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function App() {
+  const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
+  const nav = t.nav || "tabs";
+  const addModel = t.addModel || "fab";
+
+  const [owner, setOwner] = useState("amy");
+  const [done, setDone] = useState(() => new Set());
+  const [extra, setExtra] = useState([]);
+  const [route, setRoute] = useState({ kind:"inbox", card:null });
+  const [drawer, setDrawer] = useState(false);
+  const [sheet, setSheet] = useState({ open:false, card:null });
+
+  const tasks = TASKS.concat(extra);
+
+  const toggle = (id) => setDone(prev => {
+    const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n;
+  });
+  const addTask = (obj) => {
+    setExtra(prev => prev.concat([{ ...obj, id:`x${++__ex}` }]));
+  };
+
+  const counts = { amy:0, kyle:0 };
+  tasks.forEach(x => { if (INBOX_BUCKETS.includes(x.bucket) && !done.has(x.id)) counts[x.owner]++; });
+
+  // unify tab/route across nav models
+  const go = (kind) => { setRoute({ kind, card:null }); setDrawer(false); };
+  const openCard = (card) => { setRoute({ kind:"card", card }); setDrawer(false); };
+  const openSheet = (card=null) => setSheet({ open:true, card });
+  const closeSheet = () => setSheet(s => ({ ...s, open:false }));
+
+  // which screen
+  // owner toggle scrolls with the content (not pinned) — built once, placed
+  // at the top of every screen's scroll area
+  const topBar = <div className="m-ownerbar"><OwnerToggle owner={owner} setOwner={setOwner} counts={counts}/></div>;
+
+  let screen;
+  const r = route.kind;
+  if (r === "inbox") {
+    screen = <InboxScreen topBar={topBar} tasks={tasks} owner={owner} done={done} toggle={toggle}
+                          addModel={addModel} onAdd={addTask} openSheet={openSheet}/>;
+  } else if (r === "cards") {
+    screen = <CardListScreen topBar={topBar} owner={owner} onCard={openCard} grid={nav==="grid"}/>;
+  } else if (r === "card") {
+    screen = <CardDetailScreen topBar={topBar} card={route.card} tasks={tasks} owner={owner} done={done} toggle={toggle}
+                               onBack={()=>go(nav==="drawer"?"inbox":"cards")} addModel={addModel}
+                               onAdd={addTask} openSheet={openSheet}/>;
+  } else if (r === "done") {
+    screen = <DoneScreen topBar={topBar} tasks={tasks} owner={owner} done={done}/>;
+  } else {
+    screen = <SettingsScreen topBar={topBar} owner={owner} setOwner={setOwner} t={t} setTweak={setTweak}/>;
+  }
+
+  // FAB shows on task screens only
+  const showFab = addModel==="fab" && (r==="inbox" || r==="card");
+  // tab bar present only in tabs model
+  const hasTabs = nav==="tabs";
+  const dark = (t.theme||"Vapor") !== "Bone";
+
+  const appStyle = {};
+  if (t.accent) { appStyle["--accent"] = t.accent; appStyle["--accent-d"] = t.accent; }
+
+  // map route → active tab id
+  const activeTab = (r==="card") ? "cards" : r;
+
+  return (
+    <DeviceStage>
+      <IOSDevice dark={dark}>
+        <div className={"m-app" + (t.showGrid?"":" nogrid")}
+             data-theme={(t.theme||"Vapor").toLowerCase()} data-density={t.density||"compact"}
+             style={appStyle}>
+
+          <div className="m-top">
+            <div className="m-topbar">
+              {nav==="drawer" && (
+                <button className="m-iconbtn" style={{width:34,height:34,flex:"0 0 34px"}} onClick={()=>setDrawer(true)}>
+                  {Ic.menu({s:18,c:"currentColor"})}
+                </button>
+              )}
+              <div className="m-brand"><div className="m-mark"></div><div className="m-brandname">FAIRPLAY</div></div>
+              <div className="m-top-spacer"></div>
+              {nav==="grid" && (
+                <button className={"m-iconbtn"+(r==="me"?" alert":"")} style={{width:34,height:34,flex:"0 0 34px"}} onClick={()=>go("me")}>
+                  {Ic.me({s:17,c:"currentColor"})}
+                </button>
+              )}
+              {nav!=="grid" && (
+                <button className="m-iconbtn" style={{width:34,height:34,flex:"0 0 34px"}}
+                        onClick={()=>go("done")}>
+                  {Ic.bell({s:16,c:"currentColor"})}
+                </button>
+              )}
+            </div>
+
+            {nav==="grid" && (
+              <div className="m-segtop">
+                {[["inbox","Inbox"],["cards","Cards"],["done","Done"]].map(([id,l])=>(
+                  <button key={id} className={(activeTab===id)?"on":""} onClick={()=>go(id)}>{l}</button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {screen}
+
+          {hasTabs && <TabBar tab={activeTab} setTab={go} inboxCount={counts[owner]}/>}
+
+          {showFab && (
+            <button className={"m-fab"+(hasTabs?"":" low")} onClick={()=>openSheet(r==="card"?route.card:null)}>
+              {Ic.plus({s:30,c:"currentColor"})}
+            </button>
+          )}
+
+          {nav==="drawer" && (
+            <Drawer open={drawer} onClose={()=>setDrawer(false)} owner={owner}
+                    route={route} onRoute={go} onCard={openCard} counts={counts}/>
+          )}
+
+          <AddSheet open={sheet.open} onClose={closeSheet} onAdd={addTask}
+                    owner={owner} fixedCard={sheet.card}/>
+        </div>
+      </IOSDevice>
+
+      <TweaksPanel>
+        <TweakSection label="Navigation model" />
+        <TweakRadio label="Get to cards" value={nav}
+                    options={[{value:"tabs",label:"Tabs"},{value:"drawer",label:"Drawer"},{value:"grid",label:"Grid"}]}
+                    onChange={(v)=>setTweak("nav", v)} />
+        <TweakSection label="Add a task" />
+        <TweakRadio label="Method" value={addModel}
+                    options={[{value:"fab",label:"FAB"},{value:"inline",label:"Inline"},{value:"header",label:"Header"}]}
+                    onChange={(v)=>setTweak("addModel", v)} />
+        <TweakSection label="Theme" />
+        <TweakRadio label="Skin" value={t.theme} options={["Bone","Eclipse","Vapor"]}
+                    onChange={(v)=>{ const def={Bone:"#EE3D17",Eclipse:"#FF5A33",Vapor:"#FF3D8B"}; setTweak({theme:v, accent:def[v]}); }} />
+        <TweakColor label="Accent" value={t.accent || "#FF3D8B"}
+                    options={["#FF3D8B","#EE3D17","#0C857C","#E0A23A","#7A5AE0","#2FD8D8"]}
+                    onChange={(v)=>setTweak("accent", v)} />
+        <TweakSection label="Layout" />
+        <TweakRadio label="Density" value={t.density} options={["compact","comfy"]}
+                    onChange={(v)=>setTweak("density", v)} />
+        <TweakToggle label="Background grid" value={t.showGrid}
+                     onChange={(v)=>setTweak("showGrid", v)} />
+      </TweaksPanel>
+    </DeviceStage>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
