@@ -33,7 +33,16 @@ npm run preview    # serve production build locally
 
 ## Todoist data model
 
-**The deck** = child projects of the Todoist project named `My Fair Play Cards`.
+**Profiles** — the app supports two profiles, toggled in the top bar:
+
+| Profile | Deck parent project | Default theme |
+|---------|-------------------|--------------|
+| Amy (default) | `Amy's Fair Play Cards` | eclipse |
+| Kyle | `My Fair Play Cards` | vapor |
+
+Both profiles share a single Todoist token. Switching profiles reloads the deck from the corresponding parent project and switches the theme to that profile's preference (independently adjustable in Settings).
+
+**The deck** = child projects of the active profile's deck parent project.
 
 Each child project is one Fair Play card. A task belongs to a card because it lives in that project. Projects outside this tree are ignored.
 
@@ -74,9 +83,9 @@ The UI always shows the clean description (the `FP::` line is stripped before di
 
 Edit `src/cards/deck-config.ts`. The `CARD_OVERRIDES` map is keyed by the **exact** Todoist project name. Available kinds: `timeline` | `inventory` | `auto` | `home` | `datenight`.
 
-### Change the parent project name
+### Change a profile's parent project name
 
-Edit `DECK_PARENT_NAME` in `src/cards/deck-config.ts`.
+Edit the `deckParent` field of the relevant profile in `PROFILES` inside `src/cards/deck-config.ts`.
 
 ### Add your own house layout (Home Maintenance card)
 

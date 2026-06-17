@@ -25,17 +25,18 @@ function mkProject(
 
 const PARENT_ID = 'parent-001';
 const PARENT = mkProject(PARENT_ID, 'My Fair Play Cards', null, 0);
+const PARENT_NAME = 'My Fair Play Cards';
 
 describe('resolveDeck', () => {
   it('throws when parent project is not found', () => {
-    expect(() => resolveDeck([])).toThrow('My Fair Play Cards');
+    expect(() => resolveDeck([], PARENT_NAME)).toThrow('My Fair Play Cards');
     expect(() =>
-      resolveDeck([mkProject('x', 'Other Project', null)])
+      resolveDeck([mkProject('x', 'Other Project', null)], PARENT_NAME)
     ).toThrow('My Fair Play Cards');
   });
 
   it('returns an empty deck when parent has no children', () => {
-    expect(resolveDeck([PARENT])).toEqual([]);
+    expect(resolveDeck([PARENT], PARENT_NAME)).toEqual([]);
   });
 
   it('returns children in child_order', () => {
@@ -45,7 +46,7 @@ describe('resolveDeck', () => {
       mkProject('c2', 'Auto', PARENT_ID, 0),
       mkProject('c3', 'Laundry', PARENT_ID, 1),
     ];
-    const deck = resolveDeck(projects);
+    const deck = resolveDeck(projects, PARENT_NAME);
     expect(deck.map((c) => c.name)).toEqual(['Auto', 'Laundry', 'Garbage']);
   });
 
@@ -55,7 +56,7 @@ describe('resolveDeck', () => {
       mkProject('c1', 'Garbage', PARENT_ID, 0),
       mkProject('c2', 'Auto', PARENT_ID, 1),
     ];
-    const deck = resolveDeck(projects);
+    const deck = resolveDeck(projects, PARENT_NAME);
     expect(deck[0].num).toBe('01');
     expect(deck[1].num).toBe('02');
   });
@@ -65,7 +66,7 @@ describe('resolveDeck', () => {
       PARENT,
       mkProject('c1', 'Garbage', PARENT_ID, 0),
     ];
-    const deck = resolveDeck(projects);
+    const deck = resolveDeck(projects, PARENT_NAME);
     expect(deck[0].kind).toBe('inventory');
     expect(deck[0].category).toBe('HOME');
     expect(deck[0].color).toBe('#9A7B33');
@@ -73,21 +74,21 @@ describe('resolveDeck', () => {
 
   it('applies override kind=auto for Auto card', () => {
     const projects = [PARENT, mkProject('c1', 'Auto', PARENT_ID, 0)];
-    const deck = resolveDeck(projects);
+    const deck = resolveDeck(projects, PARENT_NAME);
     expect(deck[0].kind).toBe('auto');
     expect(deck[0].color).toBe('#EE5B2B');
   });
 
   it('applies override kind=datenight for Marriage & romance', () => {
     const projects = [PARENT, mkProject('c1', 'Marriage & romance', PARENT_ID, 0)];
-    const deck = resolveDeck(projects);
+    const deck = resolveDeck(projects, PARENT_NAME);
     expect(deck[0].kind).toBe('datenight');
     expect(deck[0].category).toBe('MAGIC');
   });
 
   it('uses default kind=timeline and category=HOME for unknown projects', () => {
     const projects = [PARENT, mkProject('c1', 'Unknown New Card', PARENT_ID, 0)];
-    const deck = resolveDeck(projects);
+    const deck = resolveDeck(projects, PARENT_NAME);
     expect(deck[0].kind).toBe('timeline');
     expect(deck[0].category).toBe('HOME');
     expect(deck[0].color).toBeUndefined();
@@ -98,7 +99,7 @@ describe('resolveDeck', () => {
       PARENT,
       mkProject('c1', 'Home purchase/rental, mortgage & insurance', PARENT_ID, 0),
     ];
-    const deck = resolveDeck(projects);
+    const deck = resolveDeck(projects, PARENT_NAME);
     expect(deck[0].id).toBe('home-purchase-rental-mortgage-insurance');
   });
 
@@ -107,7 +108,7 @@ describe('resolveDeck', () => {
       PARENT,
       mkProject('c1', "Meals (kids' school lunches)", PARENT_ID, 0),
     ];
-    const deck = resolveDeck(projects);
+    const deck = resolveDeck(projects, PARENT_NAME);
     expect(deck[0].id).toBe('meals-kids-school-lunches');
   });
 
@@ -116,7 +117,7 @@ describe('resolveDeck', () => {
       PARENT,
       mkProject('c1', 'Bathing & grooming (kids)', PARENT_ID, 0),
     ];
-    const deck = resolveDeck(projects);
+    const deck = resolveDeck(projects, PARENT_NAME);
     expect(deck[0].id).toBe('bathing-grooming-kids');
   });
 
@@ -127,7 +128,7 @@ describe('resolveDeck', () => {
       mkProject('x1', 'Some other project', null, 0),   // top level non-FP
       mkProject('x2', 'Nested elsewhere', 'x1', 0),    // child of other
     ];
-    const deck = resolveDeck(projects);
+    const deck = resolveDeck(projects, PARENT_NAME);
     expect(deck.length).toBe(1);
     expect(deck[0].name).toBe('Garbage');
   });
@@ -139,7 +140,7 @@ describe('resolveDeck', () => {
       mkProject(PARENT_ID, 'My Fair Play Cards', 'root', 0),
       mkProject('c1', 'Garbage', PARENT_ID, 0),
     ];
-    const deck = resolveDeck(projects);
+    const deck = resolveDeck(projects, PARENT_NAME);
     expect(deck.length).toBe(1);
   });
 });
@@ -151,7 +152,7 @@ describe('buildProjectToCard', () => {
       mkProject('proj-gc', 'Garbage', PARENT_ID, 0),
       mkProject('proj-au', 'Auto', PARENT_ID, 1),
     ];
-    const deck = resolveDeck(projects);
+    const deck = resolveDeck(projects, PARENT_NAME);
     const map = buildProjectToCard(deck);
     expect(map.get('proj-gc')).toBe('garbage');
     expect(map.get('proj-au')).toBe('auto');

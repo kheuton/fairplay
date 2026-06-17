@@ -7,6 +7,8 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useDeckTasks } from '../lib/todoist/hooks';
 import { dueLabel } from '../lib/format';
+import { useProfile, useSettings } from '../state/settings';
+import { PROFILES, PROFILE_ORDER } from '../cards/deck-config';
 
 // ─── Cross SVG (decorative, from prototype) ──────────────────────────────────
 
@@ -95,6 +97,8 @@ function LiveClock() {
 export function TopBar() {
   const navigate = useNavigate();
   const { data: tasks = [] } = useDeckTasks();
+  const profile = useProfile();
+  const setProfile = useSettings((s) => s.setProfile);
 
   // Count overdue tasks
   const now = new Date();
@@ -119,8 +123,18 @@ export function TopBar() {
 
       <div className="tb-sep" />
 
-      {/* Deck meta */}
-      <span className="tb-meta mono up-s">MY DECK</span>
+      {/* Profile toggle */}
+      <div className="seg mini">
+        {PROFILE_ORDER.map((id) => (
+          <button
+            key={id}
+            className={profile === id ? 'on' : ''}
+            onClick={() => setProfile(id)}
+          >
+            {PROFILES[id].name.toUpperCase()}
+          </button>
+        ))}
+      </div>
 
       <div className="tb-spacer" />
 

@@ -10,8 +10,8 @@ import React, { useState, useMemo } from 'react';
 import { NavLink } from 'react-router-dom';
 import { isToday, parseISO } from 'date-fns';
 import { useDeck, useDeckTasks } from '../lib/todoist/hooks';
-import { getToken } from '../state/settings';
-import { CATEGORY_ORDER } from '../cards/deck-config';
+import { getToken, useProfile } from '../state/settings';
+import { CATEGORY_ORDER, PROFILES } from '../cards/deck-config';
 import type { CardDef, FpTask } from '../lib/types';
 
 // ─── Cross search glyph ───────────────────────────────────────────────────────
@@ -97,6 +97,7 @@ export function Rail() {
   const [search, setSearch] = useState('');
   const { data: deck = [], isLoading } = useDeck();
   const { data: tasks = [] } = useDeckTasks();
+  const profile = useProfile();
 
   const hasToken = getToken() !== null;
 
@@ -119,7 +120,7 @@ export function Rail() {
       {/* Header */}
       <div className="rail-head">
         <div className="rail-title">
-          <b className="up-s">My Cards</b>
+          <b className="up-s">{PROFILES[profile].name}'s Cards</b>
           <span className="mono">{deck.length}</span>
         </div>
         <div className="search">

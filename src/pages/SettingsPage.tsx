@@ -3,11 +3,12 @@
  * Skin, Accent, Density, Grid, Inventory display, Todoist Link section.
  */
 import React, { useState } from 'react';
-import { useSettings } from '../state/settings';
+import { useSettings, useProfile } from '../state/settings';
 import { useDeck, useDeckTasks, useConnection, useAbsorbCharter, useDeckCharters } from '../lib/todoist/hooks';
 import { detectConceptTasks } from '../lib/charter';
 import type { Theme, Density, InvDisplay } from '../state/settings';
 import type { CardDef } from '../lib/types';
+import { PROFILES } from '../cards/deck-config';
 
 // ─── Accent swatches ─────────────────────────────────────────────────────────
 
@@ -61,6 +62,7 @@ function ConnectionChip() {
 
 function DeckReadout() {
   const { data: deck, isLoading, isError } = useDeck();
+  const profile = useProfile();
 
   if (isLoading) {
     return <span className="mono" style={{ fontSize: 10, color: 'var(--ink-3)' }}>LOADING DECK...</span>;
@@ -71,7 +73,7 @@ function DeckReadout() {
 
   return (
     <span className="mono" style={{ fontSize: 10, color: 'var(--ink-2)' }}>
-      MY FAIR PLAY CARDS · {deck.length} CARDS
+      {PROFILES[profile].deckParent.toUpperCase()} · {deck.length} CARDS
     </span>
   );
 }
@@ -243,7 +245,9 @@ function ChartersSection() {
 // ─── SettingsPage ─────────────────────────────────────────────────────────────
 
 export default function SettingsPage() {
-  const { theme, density, showGrid, accent, invDisplay, set } = useSettings();
+  const theme = useSettings((s) => s.themeByProfile[s.profile] ?? PROFILES[s.profile].theme);
+  const setTheme = useSettings((s) => s.setTheme);
+  const { density, showGrid, accent, invDisplay, set } = useSettings();
   const { status: connStatus } = useConnection();
 
   return (
@@ -276,7 +280,7 @@ export default function SettingsPage() {
                 <button
                   key={t}
                   className={theme === t ? 'on' : ''}
-                  onClick={() => set({ theme: t })}
+                  onClick={() => setTheme(t)}
                 >
                   {t.toUpperCase()}
                 </button>

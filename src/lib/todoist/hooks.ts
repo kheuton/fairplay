@@ -21,7 +21,8 @@ import {
   type UseMutationResult,
 } from '@tanstack/react-query';
 import { useStore } from 'zustand';
-import { useSettings, getToken } from '../../state/settings';
+import { useSettings, getToken, useProfile } from '../../state/settings';
+import { PROFILES } from '../../cards/deck-config';
 import type { CardDef, FpTask, FpMeta, InvMeta } from '../types';
 import { fetchAllPages, fetchAllCompletedPages, todoistGet, todoistPost, todoistDelete, type RawTask } from './client';
 import { resolveDeck, buildProjectToCard } from './deck';
@@ -69,15 +70,16 @@ function useTokenEnabled(): boolean {
 /** Resolved deck in Todoist child_order, stale after 5 min. */
 export function useDeck(): UseQueryResult<CardDef[]> {
   const enabled = useTokenEnabled();
+  const profile = useProfile();
   return useQuery<CardDef[]>({
-    queryKey: ['deck'],
+    queryKey: ['deck', profile],
     enabled,
     staleTime: 5 * 60 * 1000,
     queryFn: async (): Promise<CardDef[]> => {
       const projects = await fetchAllPages<Parameters<typeof resolveDeck>[0][0]>(
         '/api/v1/projects?limit=200'
       );
-      return resolveDeck(projects);
+      return resolveDeck(projects, PROFILES[profile].deckParent);
     },
   });
 }
@@ -127,10 +129,11 @@ function makeTaskQueryFn(deck: CardDef[] | undefined) {
  */
 export function useDeckTasks(): UseQueryResult<FpTask[]> {
   const enabled = useTokenEnabled();
+  const profile = useProfile();
   const { data: deck } = useDeck();
 
   return useQuery<FpTask[], Error, FpTask[]>({
-    queryKey: ['fp-tasks'],
+    queryKey: ['fp-tasks', profile],
     enabled: enabled && !!deck,
     queryFn: makeTaskQueryFn(deck),
     select: (tasks) =>
@@ -146,10 +149,11 @@ export function useDeckTasks(): UseQueryResult<FpTask[]> {
 /** Open FP tasks filtered to one card (excludes carriers). Memoized via select. */
 export function useCardTasks(cardId: string): UseQueryResult<FpTask[]> {
   const enabled = useTokenEnabled();
+  const profile = useProfile();
   const { data: deck } = useDeck();
 
   return useQuery<FpTask[], Error, FpTask[]>({
-    queryKey: ['fp-tasks'],
+    queryKey: ['fp-tasks', profile],
     enabled: enabled && !!deck,
     queryFn: makeTaskQueryFn(deck),
     select: (tasks) =>
@@ -166,10 +170,11 @@ export function useCardTasks(cardId: string): UseQueryResult<FpTask[]> {
 /** FP-item carrier tasks for an inventory card. Memoized via select. */
 export function useInventory(cardId: string): UseQueryResult<FpTask[]> {
   const enabled = useTokenEnabled();
+  const profile = useProfile();
   const { data: deck } = useDeck();
 
   return useQuery<FpTask[], Error, FpTask[]>({
-    queryKey: ['fp-tasks'],
+    queryKey: ['fp-tasks', profile],
     enabled: enabled && !!deck,
     queryFn: makeTaskQueryFn(deck),
     select: (tasks) =>
@@ -188,12 +193,13 @@ export function useCardConfig(cardId: string): {
   isLoading: boolean;
 } {
   const enabled = useTokenEnabled();
+  const profile = useProfile();
   const qc = useQueryClient();
   const { data: deck } = useDeck();
   const card = deck?.find((c) => c.id === cardId);
 
   const query = useQuery<Record<string, unknown>>({
-    queryKey: ['fp-config', cardId],
+    queryKey: ['fp-config', profile, cardId],
     enabled: enabled && !!card,
     queryFn: async (): Promise<Record<string, unknown>> => {
       if (!card) return {};
@@ -261,8 +267,8 @@ export function useCardConfig(cardId: string): {
       });
     }
 
-    await qc.invalidateQueries({ queryKey: ['fp-config', cardId] });
-    qc.setQueryData(['fp-config', cardId], next);
+    await qc.invalidateQueries({ queryKey: ['fp-config', profile, cardId] });
+    qc.setQueryData(['fp-config', profile, cardId], next);
   };
 
   return {
@@ -291,13 +297,14 @@ export function useCardConfig(cardId: string): {
  */
 export function useCompletedTasks(sinceDays: number): UseQueryResult<FpTask[]> {
   const enabled = useTokenEnabled();
+  const profile = useProfile();
   const { data: deck } = useDeck();
 
   // Cap at 90 days — API enforces a 3-month max window
   const clampedDays = Math.min(sinceDays, 90);
 
   return useQuery<FpTask[]>({
-    queryKey: ['fp-completed', clampedDays],
+    queryKey: ['fp-completed', profile, clampedDays],
     enabled: enabled && !!deck,
     queryFn: async (): Promise<FpTask[]> => {
       if (!deck) return [];
@@ -371,50 +378,52 @@ export function useConnection(): {
  */
 export function useCloseTask(): UseMutationResult<void, Error, string> {
   const qc = useQueryClient();
+  const profile = useProfile();
   return useMutation<void, Error, string>({
     mutationFn: async (taskId: string): Promise<void> => {
       await todoistPost<void>(`/api/v1/tasks/${taskId}/close`);
     },
     onMutate: async (taskId) => {
-      await qc.cancelQueries({ queryKey: ['fp-tasks'] });
-      const prev = qc.getQueryData<FpTask[]>(['fp-tasks']);
+      await qc.cancelQueries({ queryKey: ['fp-tasks', profile] });
+      const prev = qc.getQueryData<FpTask[]>(['fp-tasks', profile]);
       // Remove from cache so the task disappears instantly (not just flagged)
-      qc.setQueryData<FpTask[]>(['fp-tasks'], (old) =>
+      qc.setQueryData<FpTask[]>(['fp-tasks', profile], (old) =>
         old?.filter((t) => t.id !== taskId)
       );
       return { prev };
     },
     onError: (_err, _id, ctx) => {
       const c = ctx as { prev?: FpTask[] } | undefined;
-      if (c?.prev) qc.setQueryData(['fp-tasks'], c.prev);
+      if (c?.prev) qc.setQueryData(['fp-tasks', profile], c.prev);
     },
     onSettled: () => {
-      void qc.invalidateQueries({ queryKey: ['fp-tasks'] });
+      void qc.invalidateQueries({ queryKey: ['fp-tasks', profile] });
       // Also invalidate the completed-tasks cache so the Done tab immediately
       // reflects the newly-completed task (prefix match covers all sinceDays variants).
-      void qc.invalidateQueries({ queryKey: ['fp-completed'] });
+      void qc.invalidateQueries({ queryKey: ['fp-completed', profile] });
     },
   });
 }
 
 export function useDeleteItem(): UseMutationResult<void, Error, string> {
   const qc = useQueryClient();
+  const profile = useProfile();
   return useMutation<void, Error, string>({
     mutationFn: async (taskId: string): Promise<void> => {
       await todoistDelete(`/api/v1/tasks/${taskId}`);
     },
     onMutate: async (taskId) => {
-      await qc.cancelQueries({ queryKey: ['fp-tasks'] });
-      const prev = qc.getQueryData<FpTask[]>(['fp-tasks']);
-      qc.setQueryData<FpTask[]>(['fp-tasks'], (old) => old?.filter((t) => t.id !== taskId));
+      await qc.cancelQueries({ queryKey: ['fp-tasks', profile] });
+      const prev = qc.getQueryData<FpTask[]>(['fp-tasks', profile]);
+      qc.setQueryData<FpTask[]>(['fp-tasks', profile], (old) => old?.filter((t) => t.id !== taskId));
       return { prev };
     },
     onError: (_err, _id, ctx) => {
       const c = ctx as { prev?: FpTask[] } | undefined;
-      if (c?.prev) qc.setQueryData(['fp-tasks'], c.prev);
+      if (c?.prev) qc.setQueryData(['fp-tasks', profile], c.prev);
     },
     onSettled: () => {
-      void qc.invalidateQueries({ queryKey: ['fp-tasks'] });
+      void qc.invalidateQueries({ queryKey: ['fp-tasks', profile] });
     },
   });
 }
@@ -427,15 +436,16 @@ export function useDeleteItem(): UseMutationResult<void, Error, string> {
  */
 export function useReopenTask(): UseMutationResult<void, Error, string> {
   const qc = useQueryClient();
+  const profile = useProfile();
   return useMutation<void, Error, string>({
     mutationFn: async (taskId: string): Promise<void> => {
       await todoistPost<void>(`/api/v1/tasks/${taskId}/reopen`);
     },
     onSettled: () => {
-      void qc.invalidateQueries({ queryKey: ['fp-tasks'] });
+      void qc.invalidateQueries({ queryKey: ['fp-tasks', profile] });
       // Also invalidate the completed-tasks cache so reopened tasks stop appearing
       // in the Done tab immediately (prefix match covers all sinceDays variants).
-      void qc.invalidateQueries({ queryKey: ['fp-completed'] });
+      void qc.invalidateQueries({ queryKey: ['fp-completed', profile] });
     },
   });
 }
@@ -454,6 +464,7 @@ export interface CreateTaskInput {
 
 export function useCreateTask(): UseMutationResult<FpTask, Error, CreateTaskInput> {
   const qc = useQueryClient();
+  const profile = useProfile();
   const { data: deck } = useDeck();
 
   return useMutation<FpTask, Error, CreateTaskInput>({
@@ -477,7 +488,7 @@ export function useCreateTask(): UseMutationResult<FpTask, Error, CreateTaskInpu
       return rawToFpTask(raw, projectToCard);
     },
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['fp-tasks'] });
+      void qc.invalidateQueries({ queryKey: ['fp-tasks', profile] });
     },
   });
 }
@@ -495,6 +506,7 @@ export interface UpdateTaskInput {
 
 export function useUpdateTask(): UseMutationResult<FpTask, Error, UpdateTaskInput> {
   const qc = useQueryClient();
+  const profile = useProfile();
   const { data: deck } = useDeck();
 
   return useMutation<FpTask, Error, UpdateTaskInput>({
@@ -527,7 +539,7 @@ export function useUpdateTask(): UseMutationResult<FpTask, Error, UpdateTaskInpu
       return rawToFpTask(raw, projectToCard);
     },
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['fp-tasks'] });
+      void qc.invalidateQueries({ queryKey: ['fp-tasks', profile] });
     },
   });
 }
@@ -540,6 +552,7 @@ export interface AttestItemInput {
 /** Sets meta.inv.count + verified=today (local date YYYY-MM-DD). */
 export function useAttestItem(): UseMutationResult<void, Error, AttestItemInput> {
   const qc = useQueryClient();
+  const profile = useProfile();
   return useMutation<void, Error, AttestItemInput>({
     mutationFn: async (input: AttestItemInput): Promise<void> => {
       const current = await todoistGet<RawTask>(`/api/v1/tasks/${input.taskId}`);
@@ -560,7 +573,7 @@ export function useAttestItem(): UseMutationResult<void, Error, AttestItemInput>
       await todoistPost(`/api/v1/tasks/${input.taskId}`, { description: newDesc });
     },
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['fp-tasks'] });
+      void qc.invalidateQueries({ queryKey: ['fp-tasks', profile] });
     },
   });
 }
@@ -572,6 +585,7 @@ export interface UpdateItemMetaInput {
 
 export function useUpdateItemMeta(): UseMutationResult<void, Error, UpdateItemMetaInput> {
   const qc = useQueryClient();
+  const profile = useProfile();
   return useMutation<void, Error, UpdateItemMetaInput>({
     mutationFn: async (input: UpdateItemMetaInput): Promise<void> => {
       const current = await todoistGet<RawTask>(`/api/v1/tasks/${input.taskId}`);
@@ -586,7 +600,7 @@ export function useUpdateItemMeta(): UseMutationResult<void, Error, UpdateItemMe
       await todoistPost(`/api/v1/tasks/${input.taskId}`, { description: newDesc });
     },
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['fp-tasks'] });
+      void qc.invalidateQueries({ queryKey: ['fp-tasks', profile] });
     },
   });
 }
@@ -599,6 +613,7 @@ export interface SeedInventoryInput {
 /** Bulk-create FP-item carrier tasks in the card's project. */
 export function useSeedInventory(): UseMutationResult<void, Error, SeedInventoryInput> {
   const qc = useQueryClient();
+  const profile = useProfile();
   const { data: deck } = useDeck();
 
   return useMutation<void, Error, SeedInventoryInput>({
@@ -619,7 +634,7 @@ export function useSeedInventory(): UseMutationResult<void, Error, SeedInventory
       );
     },
     onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['fp-tasks'] });
+      void qc.invalidateQueries({ queryKey: ['fp-tasks', profile] });
     },
   });
 }
@@ -635,10 +650,11 @@ export function useSeedInventory(): UseMutationResult<void, Error, SeedInventory
  */
 export function useDeckCharters(): Map<string, CharterFields | null> {
   const enabled = useTokenEnabled();
+  const profile = useProfile();
   const { data: deck } = useDeck();
 
   const query = useQuery<FpTask[], Error, Map<string, CharterFields | null>>({
-    queryKey: ['fp-tasks'],
+    queryKey: ['fp-tasks', profile],
     enabled: enabled && !!deck,
     queryFn: makeTaskQueryFn(deck),
     select: (tasks) => {
@@ -679,13 +695,14 @@ export interface UseCharterResult {
  */
 export function useCharter(cardId: string): UseCharterResult {
   const enabled = useTokenEnabled();
+  const profile = useProfile();
   const qc = useQueryClient();
   const { data: deck } = useDeck();
   const card = deck?.find((c) => c.id === cardId);
 
   // Select the charter carrier for this card from the shared task cache
   const charterQuery = useQuery<FpTask[], Error, FpTask | null>({
-    queryKey: ['fp-tasks'],
+    queryKey: ['fp-tasks', profile],
     enabled: enabled && !!deck,
     queryFn: makeTaskQueryFn(deck),
     select: (tasks) =>
@@ -732,7 +749,7 @@ export function useCharter(cardId: string): UseCharterResult {
       }
     },
     onSettled: () => {
-      void qc.invalidateQueries({ queryKey: ['fp-tasks'] });
+      void qc.invalidateQueries({ queryKey: ['fp-tasks', profile] });
     },
   });
 
@@ -760,6 +777,7 @@ export function useAbsorbCharter(): UseMutationResult<
   { cardId: string }
 > {
   const qc = useQueryClient();
+  const profile = useProfile();
   const { data: deck } = useDeck();
 
   return useMutation<AbsorbCharterResult, Error, { cardId: string }>({
@@ -834,8 +852,8 @@ export function useAbsorbCharter(): UseMutationResult<
       return { absorbed: toClose.length };
     },
     onSettled: () => {
-      void qc.invalidateQueries({ queryKey: ['fp-tasks'] });
-      void qc.invalidateQueries({ queryKey: ['fp-completed'] });
+      void qc.invalidateQueries({ queryKey: ['fp-tasks', profile] });
+      void qc.invalidateQueries({ queryKey: ['fp-completed', profile] });
     },
   });
 }

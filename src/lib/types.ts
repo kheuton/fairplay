@@ -1,3 +1,4 @@
+export type Theme = 'bone' | 'eclipse' | 'vapor';
 export type CardKind = 'timeline' | 'inventory' | 'auto' | 'home' | 'datenight';
 export type CardCategory = 'HOME' | 'OUT' | 'CAREGIVING' | 'MAGIC';
 

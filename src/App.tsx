@@ -16,7 +16,8 @@ import {
   useNavigate,
 } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { useSettings } from './state/settings';
+import { useSettings, useProfile } from './state/settings';
+import { PROFILES } from './cards/deck-config';
 import { TopBar } from './shell/TopBar';
 import { Rail } from './shell/Rail';
 import { useDeck, useConnection } from './lib/todoist/hooks';
@@ -87,6 +88,7 @@ const queryClient = new QueryClient({
 function CardPage() {
   const { id } = useParams<{ id: string }>();
   const { data: deck, isLoading, isError, refetch } = useDeck();
+  const profile = useProfile();
 
   if (isLoading) {
     return <div className="view"><LoadState status="loading" /></div>;
@@ -97,7 +99,7 @@ function CardPage() {
       <div className="view">
         <LoadState
           status="error"
-          message={'Check that "My Fair Play Cards" project exists in Todoist'}
+          message={`Check that "${PROFILES[profile].deckParent}" project exists in Todoist`}
           retry={() => void refetch()}
         />
       </div>
@@ -163,7 +165,8 @@ function AppShell() {
 // ─── Root ─────────────────────────────────────────────────────────────────────
 
 export default function App() {
-  const { theme, density, accent, showGrid } = useSettings();
+  const theme = useSettings((s) => s.themeByProfile[s.profile] ?? PROFILES[s.profile].theme);
+  const { density, accent, showGrid } = useSettings();
 
   // Apply accent override as CSS vars on .app — both --accent AND --accent-d per the
   // prototype pattern (design/prototype/FairPlay.html), since theme.css uses --accent-d
