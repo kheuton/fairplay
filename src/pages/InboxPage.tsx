@@ -26,6 +26,7 @@ import {
   Stats,
 } from '../shell/atoms';
 import { QuickAdd } from '../shell/QuickAdd';
+import { useTaskEditor } from '../shell/TaskEditorContext';
 import './inbox/inbox.css';
 
 // ─── Grouping helpers ─────────────────────────────────────────────────────────
@@ -85,11 +86,11 @@ interface TriageGroupBlockProps {
   group: TriageGroup;
   tasks: FpTask[];
   onToggle: (taskId: string) => void;
-  onOpen: (cardId: string) => void;
+  onEditTask: (task: FpTask) => void;
   deck: ReturnType<typeof useDeck>['data'];
 }
 
-function TriageGroupBlock({ group, tasks, onToggle, onOpen, deck }: TriageGroupBlockProps) {
+function TriageGroupBlock({ group, tasks, onToggle, onEditTask, deck }: TriageGroupBlockProps) {
   const [laterOpen, setLaterOpen] = useState(false);
 
   if (tasks.length === 0) return null;
@@ -118,7 +119,7 @@ function TriageGroupBlock({ group, tasks, onToggle, onOpen, deck }: TriageGroupB
                 task={task}
                 card={card}
                 onToggle={() => onToggle(task.id)}
-                onOpen={task.cardId ? () => onOpen(task.cardId!) : undefined}
+                onOpen={() => onEditTask(task)}
               />
             );
           })}
@@ -135,6 +136,8 @@ type ViewMode = 'triage' | 'all' | 'done';
 export default function InboxPage() {
   const navigate = useNavigate();
   const now = new Date();
+
+  const { openEditor } = useTaskEditor();
 
   const [mode, setMode] = useState<ViewMode>('triage');
   const [quickAddOpen, setQuickAddOpen] = useState(false);
@@ -321,28 +324,28 @@ export default function InboxPage() {
                     group="OVERDUE"
                     tasks={grouped.OVERDUE}
                     onToggle={handleToggle}
-                    onOpen={handleOpen}
+                    onEditTask={openEditor}
                     deck={deck}
                   />
                   <TriageGroupBlock
                     group="TODAY"
                     tasks={grouped.TODAY}
                     onToggle={handleToggle}
-                    onOpen={handleOpen}
+                    onEditTask={openEditor}
                     deck={deck}
                   />
                   <TriageGroupBlock
                     group="THIS WEEK"
                     tasks={grouped['THIS WEEK']}
                     onToggle={handleToggle}
-                    onOpen={handleOpen}
+                    onEditTask={openEditor}
                     deck={deck}
                   />
                   <TriageGroupBlock
                     group="LATER"
                     tasks={grouped.LATER}
                     onToggle={handleToggle}
-                    onOpen={handleOpen}
+                    onEditTask={openEditor}
                     deck={deck}
                   />
                 </>
@@ -364,7 +367,7 @@ export default function InboxPage() {
                           task={task}
                           card={card}
                           onToggle={() => handleToggle(task.id)}
-                          onOpen={task.cardId ? () => handleOpen(task.cardId!) : undefined}
+                          onOpen={() => openEditor(task)}
                         />
                       );
                     })}

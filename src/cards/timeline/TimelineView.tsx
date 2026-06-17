@@ -29,6 +29,7 @@ import { useConnection } from '../../lib/todoist/hooks';
 import { monthLabel } from '../../lib/format';
 import { Seg, TaskRow, LoadState, GroupLabel } from '../../shell/atoms';
 import { QuickAdd } from '../../shell/QuickAdd';
+import { useTaskEditor } from '../../shell/TaskEditorContext';
 import { CharterPanel } from '../../shell/CharterPanel';
 import './timeline.css';
 
@@ -272,6 +273,7 @@ interface ListPanelProps {
 }
 
 function ListPanel({ tasks, card, onClose }: ListPanelProps) {
+  const { openEditor } = useTaskEditor();
   const sorted = useMemo(() => sortTasks(tasks), [tasks]);
 
   return (
@@ -283,6 +285,7 @@ function ListPanel({ tasks, card, onClose }: ListPanelProps) {
             task={task}
             card={card}
             onToggle={() => onClose(task.id)}
+            onOpen={() => openEditor(task)}
           />
         ))}
       </div>

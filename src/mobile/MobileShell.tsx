@@ -13,6 +13,8 @@ import { Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-
 import { OwnerToggle } from './atoms';
 import { Drawer } from './Drawer';
 import { AddSheet } from './AddSheet';
+import { EditSheet } from './EditSheet';
+import { useTaskEditor } from '../shell/TaskEditorContext';
 import { MobileInbox } from './MobileInbox';
 import { MobileCardDetail } from './MobileCardDetail';
 import { MobileDone } from './MobileDone';
@@ -26,6 +28,7 @@ export function MobileShell() {
   const navigate = useNavigate();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [sheet, setSheet] = useState<{ open: boolean; cardId: string | null }>({ open: false, cardId: null });
+  const { task: editTask, closeEditor } = useTaskEditor();
 
   // Close the drawer on any navigation.
   useEffect(() => {
@@ -85,6 +88,8 @@ export function MobileShell() {
         presetCardId={sheet.cardId}
         onClose={() => setSheet({ open: false, cardId: null })}
       />
+
+      <EditSheet task={editTask} onClose={closeEditor} />
     </div>
   );
 }

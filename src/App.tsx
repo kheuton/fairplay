@@ -20,6 +20,8 @@ import { useSettings, useProfile } from './state/settings';
 import { PROFILES } from './cards/deck-config';
 import { useIsMobile } from './shell/useIsMobile';
 import { MobileShell } from './mobile/MobileShell';
+import { TaskEditorProvider, useTaskEditor } from './shell/TaskEditorContext';
+import { EditTaskModal } from './shell/EditTaskModal';
 import { TopBar } from './shell/TopBar';
 import { Rail } from './shell/Rail';
 import { useDeck, useConnection } from './lib/todoist/hooks';
@@ -144,6 +146,7 @@ function NoTokenBanner() {
 // ─── App shell ────────────────────────────────────────────────────────────────
 
 function AppShell() {
+  const { task: editTask, closeEditor } = useTaskEditor();
   return (
     <div className="app-inner" style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
       <TopBar />
@@ -160,6 +163,7 @@ function AppShell() {
         </Routes>
       </div>
       <NoTokenBanner />
+      <EditTaskModal task={editTask} onClose={closeEditor} />
     </div>
   );
 }
@@ -197,7 +201,9 @@ export default function App() {
           data-density={density}
           style={{ ...accentStyle, ...gridStyle }}
         >
-          {isMobile ? <MobileShell /> : <AppShell />}
+          <TaskEditorProvider>
+            {isMobile ? <MobileShell /> : <AppShell />}
+          </TaskEditorProvider>
         </div>
       </QueryClientProvider>
     </HashRouter>

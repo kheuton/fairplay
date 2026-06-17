@@ -101,6 +101,9 @@
   font-family: "JetBrains Mono", monospace; font-size: 12px; letter-spacing: .14em; font-weight: 700;
 }
 .m-task-behind .ck { display: flex; margin-left: 10px; }
+/* Reverse swipe (right) reveals EDIT instead of DONE: left-anchored, inverted bar. */
+.m-task-behind.edit { justify-content: flex-start; background: var(--ink); color: var(--bg); }
+.m-task-behind.edit .ck { order: -1; margin-left: 0; margin-right: 10px; }
 .m-task {
   position: relative; display: flex; align-items: center; gap: 13px;
   padding: 14px 4px; background: var(--bg);
@@ -200,6 +203,15 @@
 }
 .m-sheet-add:disabled { background: var(--surface-3); color: var(--ink-4); cursor: default; }
 .m-sheet-err { color: var(--accent); font-family: "JetBrains Mono", monospace; font-size: 10px; text-transform: uppercase; letter-spacing: .08em; margin-top: 12px; }
+
+/* secondary destructive action in the edit sheet */
+.m-sheet-del {
+  width: 100%; height: 46px; margin-top: 10px; background: transparent;
+  border: 1px solid var(--accent); color: var(--accent);
+  font-family: "JetBrains Mono", monospace; font-size: 11px; text-transform: uppercase; letter-spacing: .1em;
+  cursor: pointer;
+}
+.m-sheet-del:disabled { opacity: .5; cursor: default; }
 
 /* ---------- DRAWER ----------------------------------------- */
 .m-drawer {

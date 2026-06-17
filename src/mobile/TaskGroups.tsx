@@ -9,6 +9,7 @@ import type { FpTask, CardDef } from '../lib/types';
 import { groupByTriage, type TriageGroup } from '../lib/triage';
 import { MobileTaskRow } from './MobileTaskRow';
 import { GroupDivider } from './atoms';
+import { useTaskEditor } from '../shell/TaskEditorContext';
 
 interface TaskGroupsProps {
   tasks: FpTask[];
@@ -33,6 +34,7 @@ export function MobileTaskGroups({
   emptyLabel = 'ALL CLEAR',
   emptySub = 'Nothing on this list.',
 }: TaskGroupsProps) {
+  const { openEditor } = useTaskEditor();
   const grouped = groupByTriage(tasks, now);
   const visible = buckets.filter((b) => grouped[b].length > 0);
 
@@ -57,6 +59,7 @@ export function MobileTaskGroups({
               card={showTag ? deck?.find((c) => c.id === t.cardId) : undefined}
               showTag={showTag}
               onToggle={() => onComplete(t.id)}
+              onEdit={() => openEditor(t)}
             />
           ))}
         </div>

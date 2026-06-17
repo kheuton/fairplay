@@ -18,6 +18,11 @@ export const Ic = {
       <path d="M3 8.5l3.2 3.2L13 4.5" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   ),
+  edit: ({ s = 16, c = 'currentColor' }: IconProps = {}) => (
+    <svg width={s} height={s} viewBox="0 0 16 16" fill="none">
+      <path d="M10.5 2.5l3 3M2.5 13.5l1-3.3 7.2-7.2 2.3 2.3-7.2 7.2-3.3 1z" stroke={c} strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  ),
   plus: ({ s = 20, c = 'currentColor' }: IconProps = {}) => (
     <svg width={s} height={s} viewBox="0 0 20 20" fill="none">
       <path d="M10 3v14M3 10h14" stroke={c} strokeWidth="2" strokeLinecap="round" />
