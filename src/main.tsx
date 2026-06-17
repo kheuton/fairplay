@@ -15,6 +15,7 @@ import '@fontsource/jetbrains-mono/500.css';
 import '@fontsource/jetbrains-mono/600.css';
 
 import './styles/theme.css';
+import './styles/mobile.css';
 
 import React from 'react';
 import { createRoot } from 'react-dom/client';

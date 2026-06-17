@@ -18,6 +18,8 @@ import {
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useSettings, useProfile } from './state/settings';
 import { PROFILES } from './cards/deck-config';
+import { useIsMobile } from './shell/useIsMobile';
+import { MobileShell } from './mobile/MobileShell';
 import { TopBar } from './shell/TopBar';
 import { Rail } from './shell/Rail';
 import { useDeck, useConnection } from './lib/todoist/hooks';
@@ -167,6 +169,7 @@ function AppShell() {
 export default function App() {
   const theme = useSettings((s) => s.themeByProfile[s.profile] ?? PROFILES[s.profile].theme);
   const { density, accent, showGrid } = useSettings();
+  const isMobile = useIsMobile();
 
   // Apply accent override as CSS vars on .app — both --accent AND --accent-d per the
   // prototype pattern (design/prototype/FairPlay.html), since theme.css uses --accent-d
@@ -194,7 +197,7 @@ export default function App() {
           data-density={density}
           style={{ ...accentStyle, ...gridStyle }}
         >
-          <AppShell />
+          {isMobile ? <MobileShell /> : <AppShell />}
         </div>
       </QueryClientProvider>
     </HashRouter>

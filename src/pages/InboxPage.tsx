@@ -15,6 +15,7 @@ import {
   useConnection,
 } from '../lib/todoist/hooks';
 import type { FpTask } from '../lib/types';
+import { getTriageGroup, sortByDue, type TriageGroup } from '../lib/triage';
 import { dueLabel } from '../lib/format';
 import {
   GroupLabel,
@@ -28,36 +29,9 @@ import { QuickAdd } from '../shell/QuickAdd';
 import './inbox/inbox.css';
 
 // ─── Grouping helpers ─────────────────────────────────────────────────────────
-
-type TriageGroup = 'OVERDUE' | 'TODAY' | 'THIS WEEK' | 'LATER';
-
-function getTriageGroup(task: FpTask, now: Date): TriageGroup {
-  if (!task.due) return 'LATER';
-
-  try {
-    const ref = startOfDay(now);
-    // Use datetime if available, else parse date string
-    const dStr = task.due.datetime ?? task.due.date;
-    const d = parseISO(dStr);
-    const diff = differenceInCalendarDays(d, ref);
-
-    if (diff < 0) return 'OVERDUE';
-    if (diff === 0) return 'TODAY';
-    if (diff <= 7) return 'THIS WEEK';
-    return 'LATER';
-  } catch {
-    return 'LATER';
-  }
-}
-
-function sortByDue(a: FpTask, b: FpTask): number {
-  if (!a.due && !b.due) return 0;
-  if (!a.due) return 1;
-  if (!b.due) return -1;
-  const aStr = a.due.datetime ?? a.due.date;
-  const bStr = b.due.datetime ?? b.due.date;
-  return aStr.localeCompare(bStr);
-}
+// getTriageGroup / sortByDue / TriageGroup now live in ../lib/triage so the
+// mobile screens share the exact same bucketing. buildPips / findNextUp below
+// stay here (desktop calendar peek only).
 
 // ─── Calendar pips builder ────────────────────────────────────────────────────
 

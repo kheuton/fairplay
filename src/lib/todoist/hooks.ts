@@ -19,6 +19,7 @@ import {
   useQueryClient,
   type UseQueryResult,
   type UseMutationResult,
+  type QueryKey,
 } from '@tanstack/react-query';
 import { useStore } from 'zustand';
 import { useSettings, getToken, useProfile } from '../../state/settings';
@@ -440,6 +441,21 @@ export function useReopenTask(): UseMutationResult<void, Error, string> {
   return useMutation<void, Error, string>({
     mutationFn: async (taskId: string): Promise<void> => {
       await todoistPost<void>(`/api/v1/tasks/${taskId}/reopen`);
+    },
+    // Optimistically remove the task from every completed-tasks cache (all
+    // sinceDays variants) so a reopened Done row disappears before paint rather
+    // than animating off and snapping back while the reopen round-trips.
+    onMutate: async (taskId) => {
+      await qc.cancelQueries({ queryKey: ['fp-completed', profile] });
+      const prev = qc.getQueriesData<FpTask[]>({ queryKey: ['fp-completed', profile] });
+      qc.setQueriesData<FpTask[]>({ queryKey: ['fp-completed', profile] }, (old) =>
+        old?.filter((t) => t.id !== taskId)
+      );
+      return { prev };
+    },
+    onError: (_err, _id, ctx) => {
+      const c = ctx as { prev?: Array<[QueryKey, FpTask[] | undefined]> } | undefined;
+      if (c?.prev) for (const [key, data] of c.prev) qc.setQueryData(key, data);
     },
     onSettled: () => {
       void qc.invalidateQueries({ queryKey: ['fp-tasks', profile] });

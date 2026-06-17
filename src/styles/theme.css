@@ -76,6 +76,9 @@ html, body { margin: 0; height: 100%; }
 body { background: #0a0a0a; font-family: "Space Grotesk", system-ui, sans-serif; }
 
 .app {
+  /* Success / "complete" color — used by the mobile swipe-to-complete bar.
+     Aliased to --accent-2 so it resolves per-theme automatically. */
+  --ok: var(--accent-2);
   position: fixed; inset: 0;
   display: flex; flex-direction: column;
   background: var(--bg); color: var(--ink);

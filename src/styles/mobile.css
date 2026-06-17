@@ -1,0 +1,265 @@
+/* ============================================================
+   FAIRPLAY · MOBILE layout (.m-*)
+   ──────────────────────────────────────────────────────────
+   The phone presentation of the app. Tokens, themes, fonts, and
+   the grid background are INHERITED from .app (see theme.css) —
+   this file only adds layout primitives. All classes are m-
+   prefixed and only render when MobileShell mounts (≤480px), so
+   nothing here can affect the desktop layout.
+   Adapted from design/design_handoff_mobile_responsive: hardcoded
+   notch padding replaced with env(safe-area-inset-*).
+   ============================================================ */
+
+/* The mobile app frame: fills .app, becomes the positioned container
+   for the drawer / sheet / FAB overlays, mirrors the prototype .m-app. */
+.m-root {
+  position: relative; flex: 1; min-height: 0;
+  display: flex; flex-direction: column;
+  overflow: hidden;
+  user-select: none; -webkit-user-select: none;
+}
+/* Keep text editable/selectable inside form fields. */
+.m-root input, .m-root textarea { user-select: text; -webkit-user-select: text; }
+
+/* ---------- TOP BAR (clears the status bar / notch) -------- */
+.m-top {
+  flex: 0 0 auto; padding: calc(env(safe-area-inset-top, 0px) + 14px) 18px 0;
+  position: relative; z-index: 20;
+}
+.m-topbar { display: flex; align-items: center; gap: 10px; height: 44px; }
+.m-brand { display: flex; align-items: center; gap: 9px; }
+.m-mark { width: 15px; height: 15px; background: var(--accent);
+  clip-path: polygon(50% 0,100% 50%,50% 100%,0 50%); }
+.m-brandname { font-weight: 700; letter-spacing: .05em; font-size: 13px; }
+.m-top-spacer { flex: 1; }
+.m-iconbtn {
+  width: 44px; height: 44px; display: flex; align-items: center; justify-content: center;
+  border: 1px solid var(--line); background: color-mix(in srgb, var(--surface) 50%, transparent);
+  color: var(--ink-2); cursor: pointer; flex: 0 0 44px;
+}
+.m-iconbtn:active { background: var(--surface-2); color: var(--ink); }
+.m-iconbtn.alert { color: var(--accent); border-color: var(--accent); position: relative; }
+
+/* ---------- Amy / Kyle owner toggle (scrolls with content) -- */
+.m-ownerbar { padding: 14px 18px 4px; }
+.m-owner { display: flex; border: 1px solid var(--line); }
+.m-owner button {
+  flex: 1; height: 44px; display: flex; align-items: center; justify-content: center; gap: 9px;
+  background: transparent; border: 0; border-right: 1px solid var(--line);
+  color: var(--ink-3); cursor: pointer; font-family: inherit; font-size: 13px; font-weight: 500;
+}
+.m-owner button:last-child { border-right: 0; }
+.m-owner button.on { background: var(--ink); color: var(--bg); }
+.m-owner .av {
+  width: 20px; height: 20px; flex: 0 0 20px; display: flex; align-items: center; justify-content: center;
+  border-radius: 50%; font-family: "JetBrains Mono", monospace; font-size: 10px; font-weight: 600;
+  background: var(--surface-2); color: var(--ink-2);
+}
+.m-owner button.on .av { background: var(--accent); color: var(--accent-ink); }
+.m-owner button .ct { font-family: "JetBrains Mono", monospace; font-size: 10px; color: var(--ink-4); }
+.m-owner button.on .ct { color: var(--bg); opacity: .65; }
+
+/* ---------- SCROLL AREA + SCREEN HEADER -------------------- */
+.m-scroll {
+  flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden;
+  -webkit-overflow-scrolling: touch; scrollbar-width: none;
+}
+.m-scroll::-webkit-scrollbar { display: none; }
+.m-pad { padding: 16px 18px; }
+.m-pad-b { padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 116px); } /* clear FAB + home indicator */
+.m-pad-b-sm { padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 48px); }
+
+.m-head { padding: 16px 18px 6px; }
+.m-kicker { display: flex; align-items: center; gap: 9px; font-size: 9.5px; color: var(--ink-3); margin-bottom: 9px; }
+.m-kicker .tick { width: 14px; height: 2px; background: var(--accent); flex: 0 0 14px; }
+.m-h1 { font-size: 26px; font-weight: 700; letter-spacing: -.02em; line-height: 1.02; }
+.m-h1-sub { font-size: 12.5px; color: var(--ink-2); margin-top: 8px; }
+.m-h1-sub b { color: var(--accent); font-weight: 600; }
+.m-back {
+  display: inline-flex; align-items: center; gap: 7px; color: var(--ink-3);
+  font-size: 10px; cursor: pointer; margin: 0 0 6px -8px; background: none; border: 0;
+  font-family: "JetBrains Mono", monospace; text-transform: uppercase; letter-spacing: .1em; padding: 8px;
+}
+.m-back:active { color: var(--ink); }
+
+/* group divider (OVERDUE / TODAY / THIS WEEK / LATER / DONE) */
+.m-grp { display: flex; align-items: center; gap: 12px; margin: 22px 0 6px; font-size: 9.5px; color: var(--ink-3); }
+.m-grp:first-child { margin-top: 8px; }
+.m-grp.urgent { color: var(--accent); }
+.m-grp .ln { flex: 1; height: 1px; background: var(--line); }
+.m-grp .ct { font-family: "JetBrains Mono", monospace; }
+
+/* category divider (used by Settings sections + drawer-adjacent labels) */
+.m-cat { display: flex; align-items: center; gap: 11px; padding: 20px 2px 6px; font-size: 9.5px; color: var(--ink-3); }
+.m-cat .ln { flex: 1; height: 1px; background: var(--line-2); }
+
+/* ---------- TASK ROW (swipe-to-complete) ------------------- */
+.m-task-wrap { position: relative; overflow: hidden; border-bottom: 1px solid var(--line-2); }
+.m-task-behind {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: flex-end;
+  padding: 0 22px; background: var(--ok); color: var(--accent-ink);
+  font-family: "JetBrains Mono", monospace; font-size: 12px; letter-spacing: .14em; font-weight: 700;
+}
+.m-task-behind .ck { display: flex; margin-left: 10px; }
+.m-task {
+  position: relative; display: flex; align-items: center; gap: 13px;
+  padding: 14px 4px; background: var(--bg);
+  touch-action: pan-y;
+}
+.app[data-density="compact"] .m-task { padding: 11px 4px; }
+.app[data-density="comfy"]   .m-task { padding: 18px 4px; }
+.m-task.dragging { transition: none; }
+.m-task.settle { transition: transform .22s cubic-bezier(.2,.7,.3,1); }
+
+.m-tbody { flex: 1; min-width: 0; }
+.m-tname { font-size: 15px; font-weight: 500; line-height: 1.25; }
+.m-task.done .m-tname { color: var(--ink-3); text-decoration: line-through; text-decoration-color: var(--ink-4); }
+.m-tmeta { display: flex; align-items: center; gap: 10px; margin-top: 6px; flex-wrap: wrap; }
+.m-tag {
+  display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+  font-family: "JetBrains Mono", monospace; font-size: 9.5px; color: var(--ink-2);
+  text-transform: uppercase; letter-spacing: .06em;
+}
+.m-tag .sw { width: 7px; height: 7px; flex: 0 0 7px; }
+.m-due { font-family: "JetBrains Mono", monospace; font-size: 10px; color: var(--ink-3); }
+.m-due.over { color: var(--accent); }
+.m-recur { font-family: "JetBrains Mono", monospace; font-size: 9.5px; color: var(--accent-2); }
+.m-trail { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex: 0 0 auto; }
+.m-trail .m-due { font-size: 11px; color: var(--ink-2); }
+.m-trail .m-due.over { color: var(--accent); }
+
+/* empty / load states */
+.m-empty {
+  margin: 30px 4px; padding: 28px; border: 1px dashed var(--ink-4); text-align: center;
+  color: var(--ink-3); font-family: "JetBrains Mono", monospace; font-size: 11px; letter-spacing: .06em;
+}
+.m-empty .big { font-size: 13px; color: var(--ink-2); margin-bottom: 7px; letter-spacing: .1em; }
+.m-empty button {
+  margin-top: 14px; background: transparent; border: 1px solid var(--line); color: var(--ink-2);
+  font-family: "JetBrains Mono", monospace; font-size: 10px; text-transform: uppercase; letter-spacing: .1em;
+  padding: 9px 14px; cursor: pointer;
+}
+
+/* ---------- FLOATING ADD BUTTON ---------------------------- */
+.m-fab {
+  position: absolute; right: 18px; bottom: calc(env(safe-area-inset-bottom, 0px) + 26px);
+  width: 56px; height: 56px; z-index: 30;
+  background: var(--accent); color: var(--accent-ink); border: 0; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 8px 24px rgba(0,0,0,.35); clip-path: polygon(50% 0,100% 50%,50% 100%,0 50%);
+}
+.m-fab:active { transform: scale(.94); }
+.m-fab svg { transform: scale(.62); }
+
+/* ---------- BACKDROP (shared by drawer + sheet) ------------ */
+.m-backdrop {
+  position: absolute; inset: 0; z-index: 40; background: rgba(0,0,0,.45);
+  opacity: 0; pointer-events: none; transition: opacity .22s;
+}
+.m-backdrop.show { opacity: 1; pointer-events: auto; }
+
+/* ---------- BOTTOM SHEET (add task) ------------------------ */
+.m-sheet {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 41;
+  background: var(--surface); border-top: 1px solid var(--line);
+  padding: 14px 18px calc(env(safe-area-inset-bottom, 0px) + 20px);
+  transform: translateY(100%); visibility: hidden;
+  transition: transform .26s cubic-bezier(.2,.8,.25,1), visibility 0s .26s;
+  max-height: 86%; overflow-y: auto; scrollbar-width: none;
+}
+.m-sheet::-webkit-scrollbar { display: none; }
+.m-sheet.show { transform: translateY(0); visibility: visible; transition: transform .26s cubic-bezier(.2,.8,.25,1), visibility 0s 0s; }
+.m-sheet-grab { width: 38px; height: 4px; border-radius: 3px; background: var(--ink-4); margin: 2px auto 16px; }
+.m-sheet-h { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 16px; }
+.m-sheet-h .t { font-size: 18px; font-weight: 700; letter-spacing: -.01em; }
+.m-sheet-h .x { color: var(--ink-3); font-family: "JetBrains Mono", monospace; font-size: 11px; cursor: pointer; background: none; border: 0; padding: 8px; margin: -8px; }
+
+.m-field-l { font-family: "JetBrains Mono", monospace; font-size: 9px; color: var(--ink-3); text-transform: uppercase; letter-spacing: .12em; margin: 16px 0 8px; }
+.m-input {
+  width: 100%; height: 48px; padding: 0 14px; background: var(--surface-2); border: 1px solid var(--line);
+  color: var(--ink); font-family: inherit; font-size: 16px; outline: none; /* 16px avoids iOS focus-zoom */
+}
+.m-input::placeholder { color: var(--ink-3); }
+.m-input:focus { border-color: var(--accent); }
+
+.m-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.m-chip {
+  padding: 10px 13px; border: 1px solid var(--line); background: transparent; color: var(--ink-2);
+  font-family: "JetBrains Mono", monospace; font-size: 10px; text-transform: uppercase; letter-spacing: .06em;
+  cursor: pointer; display: inline-flex; align-items: center; gap: 7px;
+}
+.m-chip .sw { width: 8px; height: 8px; flex: 0 0 8px; }
+.m-chip.on { border-color: var(--accent); color: var(--ink); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.m-chip.on.ok { border-color: var(--accent-2); background: color-mix(in srgb, var(--accent-2) 12%, transparent); }
+.m-chip:disabled { opacity: .4; cursor: default; }
+
+.m-sheet-add {
+  width: 100%; height: 52px; margin-top: 24px; border: 0; background: var(--accent); color: var(--accent-ink);
+  font-family: "JetBrains Mono", monospace; font-size: 12px; text-transform: uppercase; letter-spacing: .12em;
+  font-weight: 600; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 9px;
+}
+.m-sheet-add:disabled { background: var(--surface-3); color: var(--ink-4); cursor: default; }
+.m-sheet-err { color: var(--accent); font-family: "JetBrains Mono", monospace; font-size: 10px; text-transform: uppercase; letter-spacing: .08em; margin-top: 12px; }
+
+/* ---------- DRAWER ----------------------------------------- */
+.m-drawer {
+  position: absolute; top: 0; bottom: 0; left: 0; width: 82%; max-width: 320px; z-index: 42;
+  background: var(--surface); border-right: 1px solid var(--line);
+  transform: translateX(-100%); visibility: hidden;
+  transition: transform .26s cubic-bezier(.2,.8,.25,1), visibility 0s .26s;
+  display: flex; flex-direction: column;
+}
+.m-drawer.show { transform: translateX(0); visibility: visible; transition: transform .26s cubic-bezier(.2,.8,.25,1), visibility 0s 0s; }
+.m-drawer-h {
+  padding: calc(env(safe-area-inset-top, 0px) + 16px) 18px 14px;
+  border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 9px;
+}
+.m-drawer-scroll { flex: 1; overflow-y: auto; padding: 6px 0 30px; scrollbar-width: none; }
+.m-drawer-scroll::-webkit-scrollbar { display: none; }
+.m-drawer-link {
+  display: flex; align-items: center; gap: 12px; padding: 0 18px; height: 46px; cursor: pointer;
+  color: var(--ink-2); font-size: 14px; border-left: 2px solid transparent;
+  background: none; border-top: 0; border-right: 0; border-bottom: 0; width: 100%; text-align: left;
+  font-family: inherit;
+}
+.m-drawer-link.on { background: var(--surface-2); border-left-color: var(--accent); color: var(--ink); font-weight: 600; }
+.m-drawer-link .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.m-drawer-link .num { font-family: "JetBrains Mono", monospace; font-size: 10px; color: var(--ink-4); width: 18px; flex: 0 0 18px; }
+.m-drawer-link .cnt { margin-left: auto; font-family: "JetBrains Mono", monospace; font-size: 10px; color: var(--ink-3); flex: 0 0 auto; }
+.m-drawer-link.has-due .cnt { color: var(--accent); }
+.m-drawer-cat { padding: 16px 18px 6px; font-family: "JetBrains Mono", monospace; font-size: 9px; color: var(--ink-3); text-transform: uppercase; letter-spacing: .12em; }
+
+/* ---------- SETTINGS (Me) ---------------------------------- */
+.m-set-row {
+  display: flex; align-items: center; gap: 14px; min-height: 56px; padding: 10px 4px;
+  border-bottom: 1px solid var(--line-2);
+}
+.m-set-row .l { flex: 1; font-size: 15px; }
+.m-set-row .l .sub { font-size: 11px; color: var(--ink-3); margin-top: 3px; }
+.m-seg { display: flex; border: 1px solid var(--line); }
+.m-seg button {
+  padding: 9px 12px; background: transparent; border: 0; border-right: 1px solid var(--line);
+  color: var(--ink-2); cursor: pointer; font-family: "JetBrains Mono", monospace; font-size: 10px;
+  text-transform: uppercase; letter-spacing: .06em;
+}
+.m-seg button:last-child { border-right: 0; }
+.m-seg button.on { background: var(--ink); color: var(--bg); }
+.m-toggle-sw {
+  width: 46px; height: 27px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface-2);
+  position: relative; cursor: pointer; flex: 0 0 46px; transition: background .15s; padding: 0;
+}
+.m-toggle-sw.on { background: var(--accent); border-color: var(--accent); }
+.m-toggle-sw i { position: absolute; top: 2px; left: 2px; width: 21px; height: 21px; border-radius: 50%; background: var(--bg); transition: transform .16s; }
+.m-toggle-sw.on i { transform: translateX(19px); background: var(--accent-ink); }
+.m-profile { display: flex; align-items: center; gap: 14px; padding: 6px 4px 18px; }
+.m-profile .big-av {
+  width: 52px; height: 52px; flex: 0 0 52px; border-radius: 50%; background: var(--accent); color: var(--accent-ink);
+  display: flex; align-items: center; justify-content: center; font-family: "JetBrains Mono", monospace; font-weight: 700; font-size: 19px;
+}
+.m-profile .nm { font-size: 18px; font-weight: 700; }
+.m-profile .sub { font-size: 12px; color: var(--ink-3); margin-top: 3px; font-family: "JetBrains Mono", monospace; letter-spacing: .04em; }
+
+/* ---------- reduced motion --------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  .m-drawer, .m-sheet, .m-backdrop, .m-task.settle, .m-toggle-sw, .m-toggle-sw i { transition: none !important; }
+}
