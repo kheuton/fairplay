@@ -3,6 +3,11 @@ node_modules/
 dist/
 dist-ssr/
 
+# cloudflare workers — local state, build temp, and local secrets (never commit)
+.wrangler/
+.dev.vars
+worker/*/tmp/
+
 # env & secrets — never commit tokens
 .env
 .env.*

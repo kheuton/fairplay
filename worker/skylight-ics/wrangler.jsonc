@@ -1,0 +1,28 @@
+{
+  // Skylight ICS Worker — Cloudflare Workers configuration
+  // See README.md for deployment instructions.
+
+  "name": "skylight-ics",
+  "main": "src/index.ts",
+
+  // Bump compatibility_date when wrangler warns about breaking changes.
+  // Set to the date you first deployed; update to get new runtime features.
+  "compatibility_date": "2024-09-23",
+
+  // Workers runtime flags
+  "compatibility_flags": ["nodejs_compat"],
+
+  // ── Environment variables ──────────────────────────────────────────────────
+  // Non-secret vars can go here as "vars". Secrets MUST use wrangler secret:
+  //
+  //   wrangler secret put TODOIST_API_TOKEN   # your Todoist personal API token
+  //   wrangler secret put FEED_KEY            # shared secret for ?key=... param
+  //
+  // NEVER put real tokens in this file — it is committed to source control.
+  "vars": {
+    // FEED_KEY and TODOIST_API_TOKEN are set as secrets (see above).
+    // You can override with a local .dev.vars file for local testing:
+    //   echo "TODOIST_API_TOKEN=your_token_here" >> .dev.vars
+    //   echo "FEED_KEY=your_secret_key_here"      >> .dev.vars
+  }
+}

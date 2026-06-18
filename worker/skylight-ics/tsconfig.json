@@ -1,0 +1,26 @@
+{
+  "compilerOptions": {
+    // Target: Workers runtime supports ES2022+
+    "target": "ES2022",
+    // Lib: WebWorker gives access to fetch, Request, Response, URL, crypto, etc.
+    // Do NOT include DOM — Workers is not a browser.
+    "lib": ["ES2022", "WebWorker"],
+    // Types: @cloudflare/workers-types provides the Cloudflare-specific globals
+    "types": ["@cloudflare/workers-types"],
+
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+
+    "strict": true,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+
+    // Allow .ts extensions in imports (resolved by wrangler/bundler)
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "skipLibCheck": true
+  },
+  "include": ["src"]
+}

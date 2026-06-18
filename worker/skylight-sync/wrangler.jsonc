@@ -1,0 +1,77 @@
+{
+  // Skylight Sync Worker — Cloudflare Workers configuration
+  // See README.md for deployment and setup instructions.
+
+  "name": "skylight-sync",
+  "main": "src/index.ts",
+
+  // Bump when wrangler warns about breaking changes.
+  "compatibility_date": "2024-09-23",
+
+  // Workers runtime flags
+  "compatibility_flags": ["nodejs_compat"],
+
+  // ── D1 database ──────────────────────────────────────────────────────────────
+  // Create with: wrangler d1 create skylight-sync-db
+  // Apply schema: wrangler d1 execute skylight-sync-db --file=migrations/0001_init.sql
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "skylight-sync-db",
+      "database_id": "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+    }
+  ],
+
+  // ── KV namespace ─────────────────────────────────────────────────────────────
+  // Create with: wrangler kv:namespace create SKYLIGHT_SYNC_KV
+  "kv_namespaces": [
+    {
+      "binding": "KV",
+      "id": "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
+    }
+  ],
+
+  // ── Cron trigger ─────────────────────────────────────────────────────────────
+  // Runs every 15 minutes. Adjust to taste.
+  "triggers": {
+    "crons": ["*/15 * * * *"]
+  },
+
+  // ── Vars (non-secret config) ──────────────────────────────────────────────────
+  // Secrets MUST use `wrangler secret put ...` — never put real values here.
+  //
+  //   wrangler secret put TODOIST_API_TOKEN   # Todoist personal API token
+  //   wrangler secret put SKYLIGHT_EMAIL      # Skylight account email
+  //   wrangler secret put SKYLIGHT_PASSWORD   # Skylight account password
+  //
+  // Override any var locally with a .dev.vars file (never commit .dev.vars):
+  //   DRYRUN=true
+  //   FRAME=5381689
+  //   FRAME_CONFIRMED=5381689:thehd
+  //   PROFILE_CATEGORY_MAP={"kyle":"20976592","amy":"20976818"}
+  //   FRAME_TIMEZONE=America/New_York
+  "vars": {
+    // DRYRUN defaults to 'true' — all non-GET Skylight calls are suppressed.
+    // Set to 'false' ONLY after proving the worker is correct on the test frame.
+    "DRYRUN": "true",
+
+    // Target frame:
+    //   '5381689' = test frame "thehd"  (safe for development)
+    //   '5356033' = real frame "heutoncal"  (requires FRAME_CONFIRMED)
+    "FRAME": "5381689",
+
+    // Must equal the frame fingerprint to allow writes on the named frame.
+    // Test frame:  FRAME_CONFIRMED=5381689:thehd
+    // Real frame:  FRAME_CONFIRMED=5356033:heutoncal
+    // Leave empty ('') to disable writes (safe default).
+    "FRAME_CONFIRMED": "",
+
+    // JSON mapping of profile -> Skylight category id for this frame.
+    // Discovered via GET /api/frames/{frame}/categories.
+    // Example: {"kyle":"20976592","amy":"20976818"}
+    "PROFILE_CATEGORY_MAP": "{}",
+
+    // IANA timezone for the Skylight frame (used for date-window calculations).
+    "FRAME_TIMEZONE": "America/New_York"
+  }
+}
