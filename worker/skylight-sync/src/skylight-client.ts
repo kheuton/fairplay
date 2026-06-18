@@ -63,6 +63,20 @@ const API_HEADERS_BASE: Record<string, string> = {
 export const DRYRUN_SYNTHETIC_ID = 'DRYRUN-SYNTHETIC-ID';
 
 // ---------------------------------------------------------------------------
+// Date helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Return a YYYY-MM-DD string offset by `days` from `date` (YYYY-MM-DD).
+ * Uses UTC arithmetic so there is no DST ambiguity.
+ */
+function isoDateOffset(date: string, days: number): string {
+  const d = new Date(`${date}T12:00:00Z`); // noon UTC avoids midnight DST edge
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+// ---------------------------------------------------------------------------
 // TokenStore interface (production: KV; tests: in-memory)
 // ---------------------------------------------------------------------------
 
@@ -585,6 +599,8 @@ export class SkylightClient {
       after,
       before,
       include_late: 'true',
+      // profile-assigned chores only appear with this filter (see getChoreById).
+      filter: 'linked_to_profile',
     });
     const resp = await this.apiGet<ChoreListResponse>(
       `/api/frames/${this.frameId}/chores?${qs}`
@@ -593,22 +609,39 @@ export class SkylightClient {
   }
 
   /**
-   * GET /api/frames/{frameId}/chores/{choreId} — fetch a single chore.
-   * Returns null on 404 (confirmed device-side delete).
-   * Re-throws all other errors.
+   * Fetch a single chore by id via the LIST endpoint (the by-id GET endpoint
+   * does not exist on the live API — it always returns 404).
+   *
+   * Queries a ±1-day window around `date` with include_late=true and
+   * include_up_for_grabs=true to guarantee the chore is visible regardless of
+   * category assignment. Finds the chore by exact id in the response array.
+   *
+   * Returns the ChoreResource if found, or null if genuinely absent.
+   * Never throws a 404-shaped error — genuine absence returns null.
+   *
+   * @param choreId - The Skylight chore id to look up.
+   * @param date    - The chore's occurrence date (YYYY-MM-DD). Used to build
+   *                  the date window for the list query.
    */
-  async getChoreById(choreId: string): Promise<ChoreResource | null> {
-    try {
-      const resp = await this.apiGet<SingleChoreResponse>(
-        `/api/frames/${this.frameId}/chores/${choreId}`
-      );
-      return resp.data;
-    } catch (err) {
-      if (err instanceof SkylightApiError && err.status === 404) {
-        return null;
-      }
-      throw err;
-    }
+  async getChoreById(choreId: string, date: string): Promise<ChoreResource | null> {
+    const after = isoDateOffset(date, -1);
+    const before = isoDateOffset(date, 1);
+    const qs = new URLSearchParams({
+      after,
+      before,
+      include_late: 'true',
+      include_up_for_grabs: 'true',
+      // REQUIRED: profile-assigned chores are only returned by the list when this
+      // filter is present. Confirmed empirically on the live frame — a windowed
+      // query WITHOUT it returns ~1/18 of our (category-assigned) chores, WITH it
+      // returns 18/18. We always assign a category, so this never hides our chores.
+      filter: 'linked_to_profile',
+    });
+    const resp = await this.apiGet<ChoreListResponse>(
+      `/api/frames/${this.frameId}/chores?${qs}`
+    );
+    const list = resp.data ?? [];
+    return list.find((c) => c.id === choreId) ?? null;
   }
 
   // ── Chores — writes (gated by DRYRUN) ─────────────────────────────────────
@@ -617,17 +650,21 @@ export class SkylightClient {
    * POST /api/frames/{frameId}/chores/create_multiple
    *
    * Safety: creates exactly ONE chore per call (design §9).
-   * Asserts data.length === 1 and that the returned summary matches
-   * the expected sentinel (idemToken embedded in summary).
+   * Asserts data.length === 1 and that the returned description matches
+   * the expected ownership marker "FPSYNC|<todoistId>" (clean-title scheme).
+   *
+   * The summary is the CLEAN task content (no visible sentinel).
+   * Ownership is verified via attributes.description, not the summary.
    *
    * Returns the created ChoreResource on success.
    * Throws on DRYRUN — callers catch DryrRunError and treat as synthetic success.
    */
   async createChore(opts: {
     summary: string;
-    start: string;       // YYYY-MM-DD
+    start: string;             // YYYY-MM-DD
     categoryId: string | null;
-    idemToken: string;   // embedded in summary by caller; verified on read-back
+    idemToken: string;         // kept for legacy compatibility; description marker is the real guard
+    description?: string;      // ownership marker "FPSYNC|<todoistId>" — verified on read-back
   }): Promise<ChoreResource> {
     const path = `/api/frames/${this.frameId}/chores/create_multiple`;
 
@@ -642,6 +679,11 @@ export class SkylightClient {
       reward_points: null,
       emoji_icon: null,
     };
+
+    // Include ownership marker in description if provided
+    if (opts.description !== undefined) {
+      body['description'] = opts.description;
+    }
 
     if (opts.categoryId !== null) {
       body['category_id'] = opts.categoryId;
@@ -670,13 +712,25 @@ export class SkylightClient {
 
     const created = resp.data[0];
 
-    // §9 Safety: assert returned summary contains our sentinel (idem_token)
-    if (!created.attributes.summary.includes(opts.idemToken)) {
-      throw new SkylightApiError(
-        `createChore: returned summary does not contain idemToken "${opts.idemToken}". ` +
-          `Got: "${created.attributes.summary}". Marking needs_review.`,
-        0
-      );
+    // §9 Safety: if a description marker was provided, verify it round-tripped.
+    // This is the primary ownership check in the clean-title scheme.
+    if (opts.description !== undefined) {
+      if (!descriptionMatchesMarker(created.attributes.description, opts.description)) {
+        throw new SkylightApiError(
+          `createChore: returned description "${created.attributes.description}" does not match ` +
+            `expected marker "${opts.description}". Marking needs_review.`,
+          0
+        );
+      }
+    } else {
+      // Legacy path: fall back to idemToken-in-summary check
+      if (!created.attributes.summary.includes(opts.idemToken)) {
+        throw new SkylightApiError(
+          `createChore: returned summary does not contain idemToken "${opts.idemToken}". ` +
+            `Got: "${created.attributes.summary}". Marking needs_review.`,
+          0
+        );
+      }
     }
 
     return created;
@@ -714,9 +768,12 @@ export class SkylightClient {
   /**
    * After completeChore, verify the status actually flipped.
    * Throws if the chore is not found or status is not 'complete'.
+   *
+   * @param choreId - The Skylight chore id.
+   * @param date    - The chore's occurrence date (YYYY-MM-DD) for the list window.
    */
-  async verifyCompleted(choreId: string): Promise<ChoreResource> {
-    const chore = await this.getChoreById(choreId);
+  async verifyCompleted(choreId: string, date: string): Promise<ChoreResource> {
+    const chore = await this.getChoreById(choreId, date);
     if (!chore) {
       throw new SkylightApiError(
         `verifyCompleted: chore ${choreId} not found after PUT complete`,
@@ -734,11 +791,14 @@ export class SkylightClient {
   }
 
   /**
-   * After deleteChore, verify the chore is gone (404).
+   * After deleteChore, verify the chore is gone (absent from the list).
    * Throws if the chore still exists.
+   *
+   * @param choreId - The Skylight chore id.
+   * @param date    - The chore's occurrence date (YYYY-MM-DD) for the list window.
    */
-  async verifyDeleted(choreId: string): Promise<void> {
-    const chore = await this.getChoreById(choreId);
+  async verifyDeleted(choreId: string, date: string): Promise<void> {
+    const chore = await this.getChoreById(choreId, date);
     if (chore !== null) {
       throw new SkylightApiError(
         `verifyDeleted: chore ${choreId} still exists after DELETE (status=${chore.attributes.status})`,
@@ -954,7 +1014,7 @@ export async function ensureFairPlayList(
 }
 
 // ---------------------------------------------------------------------------
-// Sentinel helpers (§9)
+// Sentinel helpers (§9) — kept for backward-compat with existing tests
 // ---------------------------------------------------------------------------
 
 /** Unicode left-pointing triangle — zero-collision sentinel glyph */
@@ -972,6 +1032,10 @@ export function sentinelToken(todoistId: string): string {
  * Build the full chore summary including the ▸ sentinel + short token.
  * Format: "<content> ▸<token>"
  * The sentinel is at the END so the family name reads naturally.
+ *
+ * @deprecated Use the clean-title scheme: summary = task content (no sentinel);
+ * ownership marker goes in attributes.description via choreDescriptionMarker().
+ * This function is retained for backward-compatibility with existing tests.
  */
 export function buildSummary(content: string, todoistId: string): string {
   const token = sentinelToken(todoistId);
@@ -987,4 +1051,37 @@ export function summaryMatchesSentinel(
   expectedSummary: string
 ): boolean {
   return actualSummary === expectedSummary;
+}
+
+// ---------------------------------------------------------------------------
+// Description-marker helpers (clean-title ownership scheme)
+// ---------------------------------------------------------------------------
+
+/**
+ * Build the ownership marker stored in attributes.description for chores.
+ * Format: "FPSYNC|<todoistId>"
+ *
+ * Deterministic from the Todoist task id — strong and low-collision.
+ * Families never write "FPSYNC|..." so this is a reliable bridge-owned field.
+ * Used instead of a visible sentinel in the summary so chore titles are CLEAN
+ * on the kitchen display.
+ */
+export function choreDescriptionMarker(todoistId: string): string {
+  return `FPSYNC|${todoistId}`;
+}
+
+/**
+ * Check whether a live chore's attributes.description matches the expected
+ * ownership marker for the given todoistId.
+ *
+ * Used in:
+ *   - create-verify (§9): confirm description echoed back correctly
+ *   - delete protocol: re-GET + confirm before any DELETE/complete
+ *   - inbound DETACH guard: abort if description diverged
+ */
+export function descriptionMatchesMarker(
+  liveDescription: string | null | undefined,
+  expectedMarker: string
+): boolean {
+  return liveDescription === expectedMarker;
 }

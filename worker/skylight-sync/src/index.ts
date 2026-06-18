@@ -33,10 +33,10 @@ import {
   buildSummary,
   sentinelToken,
   summaryMatchesSentinel,
-  DryrRunError,
+  choreDescriptionMarker,
+  descriptionMatchesMarker,
   SkylightApiError,
   FrameGuardError,
-  DRYRUN_SYNTHETIC_ID,
   ensureFairPlayList,
   BRIDGE_LIST_LABEL,
   DRYRUN_SYNTHETIC_LIST_ID,
@@ -87,9 +87,6 @@ const PROFILES: ProfileId[] = ['kyle', 'amy'];
 const KV_SKYLIGHT_TOKEN = 'skylight_token';
 /** KV key for token expiry (Unix seconds as string) */
 const KV_SKYLIGHT_TOKEN_EXP = 'skylight_token_exp';
-/** KV key for the bridge list id (phase 2c) — re-exported from skylight-client */
-export { KV_FAIRPLAY_LIST_ID } from './skylight-client.js';
-
 /** Window around occurrence_date for chore list queries (days) */
 const WINDOW_DAYS_PAST = 30;
 const WINDOW_DAYS_FUTURE = 90;
@@ -100,11 +97,15 @@ const WINDOW_DAYS_FUTURE = 90;
 
 /**
  * Build the label for a bridge list item.
- * Same sentinel pattern as chore summaries: "<content> ▸<token>"
- * This is the expected_summary stored in the mapping row.
+ * Returns the CLEAN task content with NO visible sentinel.
+ *
+ * Ownership for list items rests on (a) the id-map (we only ever PUT/DELETE
+ * list_item ids we created + recorded) AND (b) the dedicated bridge-owned
+ * "▸ FairPlay" list (assertBridgeListWrite already enforces this).
+ * There is no hidden field on list_items, so no marker can be stored server-side.
  */
-export function buildListItemLabel(content: string, todoistId: string): string {
-  return buildSummary(content, todoistId);
+export function buildListItemLabel(content: string, _todoistId: string): string {
+  return content;
 }
 
 /** Get a frame-timezone-aware ISO date string (YYYY-MM-DD). */
@@ -163,7 +164,8 @@ async function getSkylightToken(env: Env): Promise<string> {
 export async function runDeleteProtocol(
   client: SkylightClient,
   db: D1Database,
-  row: MappingRow
+  row: MappingRow,
+  dryrun = false
 ): Promise<void> {
   const { todoist_id, occurrence_date, skylight_id, expected_summary } = row;
 
@@ -171,30 +173,37 @@ export async function runDeleteProtocol(
     console.log(
       `[skylight-sync] delete-protocol: row ${todoist_id}/${occurrence_date} has no skylight_id — hard-deleting D1 row`
     );
-    await hardDeleteRow(db, todoist_id, occurrence_date);
+    await hardDeleteRow(db, todoist_id, occurrence_date, dryrun);
     return;
   }
 
-  // Step 1: re-GET by id — confirm exists + carries our exact expected_summary
-  const live = await client.getChoreById(skylight_id);
+  // Step 1: re-GET by id via list — confirm exists + carries our ownership marker in description
+  const live = await client.getChoreById(skylight_id, occurrence_date);
 
   if (live === null) {
     // Already gone — just hard-delete D1 row
     console.log(
       `[skylight-sync] delete-protocol: chore ${skylight_id} already 404 — hard-deleting D1 row`
     );
-    await hardDeleteRow(db, todoist_id, occurrence_date);
+    await hardDeleteRow(db, todoist_id, occurrence_date, dryrun);
     return;
   }
 
-  // §9: Confirm the live summary matches our stored expected_summary exactly
-  if (!expected_summary || !summaryMatchesSentinel(live.attributes.summary, expected_summary)) {
+  // §9: Confirm the live chore carries our ownership marker in description.
+  // The marker is deterministic: choreDescriptionMarker(todoist_id) = "FPSYNC|<todoist_id>".
+  const expectedDescMarker = choreDescriptionMarker(todoist_id);
+  if (!descriptionMatchesMarker(live.attributes.description, expectedDescMarker)) {
     console.error(
-      `[skylight-sync] delete-protocol ABORT: chore ${skylight_id} summary mismatch. ` +
-        `Expected: "${expected_summary}", got: "${live.attributes.summary}". ` +
+      `[skylight-sync] delete-protocol ABORT: chore ${skylight_id} description marker mismatch. ` +
+        `Expected: "${expectedDescMarker}", got: "${live.attributes.description}". ` +
         `Marking detached — manual review needed.`
     );
-    await markDetached(db, todoist_id, occurrence_date);
+    await markDetached(db, todoist_id, occurrence_date, dryrun);
+    return;
+  }
+
+  if (dryrun) {
+    console.log(`[skylight-sync] DRYRUN: would DELETE chore ${skylight_id}`);
     return;
   }
 
@@ -202,19 +211,10 @@ export async function runDeleteProtocol(
   await markDeleting(db, todoist_id, occurrence_date);
 
   // Step 3: DELETE (one-time, no apply_to)
-  try {
-    await client.deleteChore(skylight_id);
-  } catch (err) {
-    if (err instanceof DryrRunError) {
-      console.log(`[skylight-sync] DRYRUN: would DELETE chore ${skylight_id}`);
-      await hardDeleteRow(db, todoist_id, occurrence_date);
-      return;
-    }
-    throw err;
-  }
+  await client.deleteChore(skylight_id);
 
-  // Step 4: confirm 404
-  await client.verifyDeleted(skylight_id);
+  // Step 4: confirm deletion (absent from list)
+  await client.verifyDeleted(skylight_id, occurrence_date);
 
   // Step 5: hard-delete D1 row
   await hardDeleteRow(db, todoist_id, occurrence_date);
@@ -241,7 +241,8 @@ export async function runRollProtocol(
   frameId: string,
   profile: string,
   categoryId: string | null,
-  timezone: string
+  timezone: string,
+  dryrun = false
 ): Promise<void> {
   const { todoist_id, occurrence_date: oldOccDate } = oldRow;
 
@@ -250,13 +251,14 @@ export async function runRollProtocol(
   );
 
   // Step 1: §9 delete the old occurrence chore (re-GET, confirm, DELETE, confirm 404)
-  await runDeleteProtocol(client, db, oldRow);
+  await runDeleteProtocol(client, db, oldRow, dryrun);
 
   // After delete, the old row is hard-deleted. Now register the new occurrence in D1
   // and create the Skylight chore for it.
 
   // Step 2: check whether a 'creating' row for the new occurrence already exists
   // (e.g., from an interrupted prior roll — idempotent resume).
+  // Under DRYRUN, no row was written, so this will always return null; that is correct.
   const { getMappingByTodoistId: getMapping } = await import('./db.js');
   const existingNew = await getMapping(db, todoist_id, newOccurrenceDate);
 
@@ -270,7 +272,8 @@ export async function runRollProtocol(
     profile,
     newOccurrenceDate,
     categoryId,
-    timezone
+    timezone,
+    dryrun
   );
 
   console.log(
@@ -293,7 +296,8 @@ export async function runRollProtocol(
 export async function runOrphanSweep(
   client: SkylightClient,
   db: D1Database,
-  frameId: string
+  frameId: string,
+  dryrun = false
 ): Promise<void> {
   const deletingRows = await getDeletingMappings(db);
   if (deletingRows.length === 0) return;
@@ -315,24 +319,24 @@ export async function runOrphanSweep(
       console.log(
         `[skylight-sync] orphan-sweep: row ${row.todoist_id}/${row.occurrence_date} has no skylight_id — hard-deleting`
       );
-      await hardDeleteRow(db, row.todoist_id, row.occurrence_date);
+      await hardDeleteRow(db, row.todoist_id, row.occurrence_date, dryrun);
       continue;
     }
 
     try {
-      const live = await client.getChoreById(row.skylight_id);
+      const live = await client.getChoreById(row.skylight_id, row.occurrence_date);
       if (live === null) {
-        // Chore already 404 — just clean up the D1 row
+        // Chore already gone — just clean up the D1 row
         console.log(
-          `[skylight-sync] orphan-sweep: chore ${row.skylight_id} is 404 — hard-deleting orphan D1 row`
+          `[skylight-sync] orphan-sweep: chore ${row.skylight_id} is gone — hard-deleting orphan D1 row`
         );
-        await hardDeleteRow(db, row.todoist_id, row.occurrence_date);
+        await hardDeleteRow(db, row.todoist_id, row.occurrence_date, dryrun);
       } else {
-        // Chore still exists — resume the delete protocol (re-GET, confirm, DELETE, confirm 404, hard-delete)
+        // Chore still exists — resume the delete protocol (re-GET, confirm, DELETE, confirm gone, hard-delete)
         console.log(
           `[skylight-sync] orphan-sweep: chore ${row.skylight_id} still exists — resuming delete protocol`
         );
-        await runDeleteProtocol(client, db, row);
+        await runDeleteProtocol(client, db, row, dryrun);
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -488,7 +492,7 @@ export async function runOutboundPass(
           );
           await runRollProtocol(
             client, db, activeOldRow, curOccurrenceDate,
-            task, frameId, profile, categoryId, timezone
+            task, frameId, profile, categoryId, timezone, dryrun
           );
           continue;
         }
@@ -503,17 +507,17 @@ export async function runOutboundPass(
       for (const action of actions) {
         switch (action.type) {
           case 'CREATE_CHORE': {
-            await runCreateProtocol(client, db, task, row, frameId, profile, curOccurrenceDate, categoryId, timezone);
+            await runCreateProtocol(client, db, task, row, frameId, profile, curOccurrenceDate, categoryId, timezone, dryrun);
             break;
           }
           case 'COMPLETE_CHORE': {
             if (!row?.skylight_id) break;
-            await runCompleteProtocol(client, db, row);
+            await runCompleteProtocol(client, db, row, dryrun);
             break;
           }
           case 'DELETE_CHORE': {
             if (!row) break;
-            await runDeleteProtocol(client, db, row);
+            await runDeleteProtocol(client, db, row, dryrun);
             break;
           }
           case 'ROLL_CHORE': {
@@ -521,7 +525,7 @@ export async function runOutboundPass(
             if (!row) break;
             await runRollProtocol(
               client, db, row, action.newOccurrenceDate,
-              task, frameId, profile, categoryId, timezone
+              task, frameId, profile, categoryId, timezone, dryrun
             );
             break;
           }
@@ -590,63 +594,76 @@ export async function runCreateProtocol(
   profile: string,
   occurrenceDate: string,
   categoryId: string | null,
-  timezone: string
+  timezone: string,
+  dryrun = false
 ): Promise<void> {
-  // §9: the idemToken IS the sentinelToken(task.id) — this is the value embedded
-  // in the chore summary by buildSummary and verified by createChore's .includes() check.
-  // Using sentinelToken(task.id) keeps idemToken == embedded sentinel == stored expected_summary suffix.
+  // §9 clean-title scheme: summary = clean task content (no sentinel).
+  // Ownership marker goes in attributes.description = "FPSYNC|<todoistId>".
+  // idemToken retained for legacy compatibility but description marker is the real guard.
   const idemToken = sentinelToken(task.id);
-  const fullSummary = buildSummary(task.content, task.id);
+  const cleanSummary = task.content;
+  const descMarker = choreDescriptionMarker(task.id);
   const dueDate = task.due?.date ?? occurrenceDate;
+
+  // expected_summary stored in the mapping row is the clean title (for display/reference).
+  // Ownership verification uses descMarker (recomputable from todoist_id).
+  const expectedSummary = cleanSummary;
 
   // If an existing 'creating' row has a confirmed skylight_id, just try to promote it
   if (existingRow?.state === 'creating' && existingRow.skylight_id) {
     console.log(
       `[skylight-sync] create-protocol: row ${task.id}/${occurrenceDate} already has skylight_id=${existingRow.skylight_id} in 'creating' state — attempting promotion`
     );
-    const readback = await client.getChoreById(existingRow.skylight_id);
-    if (readback && summaryMatchesSentinel(readback.attributes.summary, fullSummary)) {
+    const readback = await client.getChoreById(existingRow.skylight_id, occurrenceDate);
+    if (readback && descriptionMatchesMarker(readback.attributes.description, descMarker)) {
       const hash = fingerprint(
         { id: task.id, content: task.content, due: task.due, description: task.description, labels: task.labels, project_id: '', section_id: null, parent_id: null, priority: 1, checked: false } as import('./types.js').RawTask,
         profile
       );
-      await commitActiveRow(db, task.id, occurrenceDate, existingRow.skylight_id, fullSummary, hash);
+      await commitActiveRow(db, task.id, occurrenceDate, existingRow.skylight_id, expectedSummary, hash, dryrun);
       console.log(
         `[skylight-sync] create-protocol: promoted existing skylight_id=${existingRow.skylight_id} to active`
       );
     } else {
       console.warn(
-        `[skylight-sync] create-protocol: skylight_id=${existingRow.skylight_id} missing or summary mismatch — marking needs_review`
+        `[skylight-sync] create-protocol: skylight_id=${existingRow.skylight_id} missing or description marker mismatch — marking needs_review`
       );
-      await markNeedsReview(db, task.id, occurrenceDate);
+      await markNeedsReview(db, task.id, occurrenceDate, dryrun);
     }
     return;
   }
 
   // §9 write-ahead recovery: if 'creating' row has null skylight_id, search for an already-created
-  // chore by sentinel (§9: read-back-by-sentinel, never blind re-create).
-  if (existingRow?.state === 'creating' && !existingRow.skylight_id) {
+  // chore by description marker (§9: read-back-by-marker, never blind re-create).
+  // Under DRYRUN no row was written so existingRow will always be null here; skip the scan.
+  if (!dryrun && existingRow?.state === 'creating' && !existingRow.skylight_id) {
     console.log(
-      `[skylight-sync] create-protocol: interrupted create for ${task.id}/${occurrenceDate} — scanning for existing chore by sentinel`
+      `[skylight-sync] create-protocol: interrupted create for ${task.id}/${occurrenceDate} — scanning for existing chore by description marker`
     );
     const after = frameLocalDate(timezone, -WINDOW_DAYS_PAST);
     const before = frameLocalDate(timezone, WINDOW_DAYS_FUTURE);
     const chores = await client.listChores(after, before);
-    const existing = chores.find((c) => c.attributes.summary === fullSummary);
+    const existing = chores.find((c) => descriptionMatchesMarker(c.attributes.description, descMarker));
     if (existing) {
       console.log(
-        `[skylight-sync] create-protocol: found existing chore ${existing.id} by sentinel — adopting (no re-POST)`
+        `[skylight-sync] create-protocol: found existing chore ${existing.id} by description marker — adopting (no re-POST)`
       );
       const hash = fingerprint(
         { id: task.id, content: task.content, due: task.due, description: task.description, labels: task.labels, project_id: '', section_id: null, parent_id: null, priority: 1, checked: false } as import('./types.js').RawTask,
         profile
       );
-      await commitActiveRow(db, task.id, occurrenceDate, existing.id, fullSummary, hash);
+      await commitActiveRow(db, task.id, occurrenceDate, existing.id, expectedSummary, hash);
       return;
     }
     console.log(
-      `[skylight-sync] create-protocol: no existing chore found by sentinel — proceeding with POST`
+      `[skylight-sync] create-protocol: no existing chore found by description marker — proceeding with POST`
     );
+  }
+
+  if (dryrun) {
+    // DRYRUN: log the planned create and return without touching D1 or Skylight
+    console.log(`[skylight-sync] DRYRUN: would create chore for task ${task.id} (summary="${cleanSummary}", description="${descMarker}")`);
+    return;
   }
 
   // §9: write-ahead 'creating' row BEFORE the POST
@@ -662,7 +679,7 @@ export async function runCreateProtocol(
       frame_id: frameId,
       profile,
       skylight_id: null,
-      expected_summary: fullSummary,
+      expected_summary: expectedSummary,
       last_pushed_status: null,
       observed_status: null,
       last_pushed_hash: null,
@@ -671,36 +688,19 @@ export async function runCreateProtocol(
     });
   }
 
-  // POST the chore
-  let created;
-  try {
-    created = await client.createChore({
-      summary: fullSummary,
-      start: dueDate,
-      categoryId,
-      idemToken,
-    });
-  } catch (err) {
-    if (err instanceof DryrRunError) {
-      console.log(`[skylight-sync] DRYRUN: would create chore for task ${task.id}`);
-      // In dryrun, commit with synthetic id so the run log is useful
-      await commitActiveRow(
-        db,
-        task.id,
-        occurrenceDate,
-        DRYRUN_SYNTHETIC_ID,
-        fullSummary,
-        fingerprint({ id: task.id, content: task.content, due: task.due, description: task.description, labels: task.labels, project_id: '', section_id: null, parent_id: null, priority: 1, checked: false } as import('./types.js').RawTask, profile)
-      );
-      return;
-    }
-    throw err;
-  }
+  // POST the chore — clean summary, ownership marker in description
+  const created = await client.createChore({
+    summary: cleanSummary,
+    start: dueDate,
+    categoryId,
+    idemToken,
+    description: descMarker,
+  });
 
   const skylightId = created.id;
 
-  // §9: read-back GET by id to confirm
-  const readback = await client.getChoreById(skylightId);
+  // §9: read-back via list to confirm
+  const readback = await client.getChoreById(skylightId, dueDate);
   if (!readback) {
     console.error(
       `[skylight-sync] create-protocol: read-back 404 for ${skylightId} — marking needs_review`
@@ -709,11 +709,11 @@ export async function runCreateProtocol(
     return;
   }
 
-  // §9: assert summary matches expected (full string comparison, never prefix)
-  if (!summaryMatchesSentinel(readback.attributes.summary, fullSummary)) {
+  // §9: assert description marker echoed back (ownership verification)
+  if (!descriptionMatchesMarker(readback.attributes.description, descMarker)) {
     console.error(
-      `[skylight-sync] create-protocol: read-back summary mismatch for ${skylightId}. ` +
-        `Expected: "${fullSummary}", got: "${readback.attributes.summary}". Marking needs_review.`
+      `[skylight-sync] create-protocol: read-back description mismatch for ${skylightId}. ` +
+        `Expected: "${descMarker}", got: "${readback.attributes.description}". Marking needs_review.`
     );
     await markNeedsReview(db, task.id, occurrenceDate);
     return;
@@ -727,15 +727,15 @@ export async function runCreateProtocol(
     );
   }
 
-  // Commit to 'active'
+  // Commit to 'active' — expected_summary is the clean title
   const hash = fingerprint(
     { id: task.id, content: task.content, due: task.due, description: task.description, labels: task.labels, project_id: '', section_id: null, parent_id: null, priority: 1, checked: false } as import('./types.js').RawTask,
     profile
   );
 
-  await commitActiveRow(db, task.id, occurrenceDate, skylightId, fullSummary, hash);
+  await commitActiveRow(db, task.id, occurrenceDate, skylightId, expectedSummary, hash);
   console.log(
-    `[skylight-sync] create-protocol: chore ${skylightId} created and verified for task ${task.id}`
+    `[skylight-sync] create-protocol: chore ${skylightId} created and verified for task ${task.id} (clean title, description marker="${descMarker}")`
   );
 }
 
@@ -746,23 +746,45 @@ export async function runCreateProtocol(
 export async function runCompleteProtocol(
   client: SkylightClient,
   db: D1Database,
-  row: MappingRow
+  row: MappingRow,
+  dryrun = false
 ): Promise<void> {
   if (!row.skylight_id) return;
 
-  try {
-    await client.completeChore(row.skylight_id);
-  } catch (err) {
-    if (err instanceof DryrRunError) {
-      console.log(`[skylight-sync] DRYRUN: would complete chore ${row.skylight_id}`);
-      await updatePushedStatus(db, row.todoist_id, row.occurrence_date, 'complete');
-      return;
-    }
-    throw err;
+  // Step 1: re-GET via list — confirm exists + carries our ownership marker in description.
+  // Mirrors runDeleteProtocol: we must not complete a chore we don't own.
+  const live = await client.getChoreById(row.skylight_id, row.occurrence_date);
+
+  if (live === null) {
+    // Chore already gone — nothing to complete; detach the D1 row.
+    console.log(
+      `[skylight-sync] complete-protocol: chore ${row.skylight_id} already 404 — marking detached`
+    );
+    await markDetached(db, row.todoist_id, row.occurrence_date, dryrun);
+    return;
   }
 
-  // §9: read-back verify status flipped
-  await client.verifyCompleted(row.skylight_id);
+  // §9: Confirm the live chore carries our ownership marker in description.
+  const expectedDescMarker = choreDescriptionMarker(row.todoist_id);
+  if (!descriptionMatchesMarker(live.attributes.description, expectedDescMarker)) {
+    console.error(
+      `[skylight-sync] complete-protocol ABORT: chore ${row.skylight_id} description marker mismatch. ` +
+        `Expected: "${expectedDescMarker}", got: "${live.attributes.description}". ` +
+        `Marking detached — manual review needed.`
+    );
+    await markDetached(db, row.todoist_id, row.occurrence_date, dryrun);
+    return;
+  }
+
+  if (dryrun) {
+    console.log(`[skylight-sync] DRYRUN: would complete chore ${row.skylight_id}`);
+    return;
+  }
+
+  await client.completeChore(row.skylight_id);
+
+  // §9: read-back verify status flipped (via list)
+  await client.verifyCompleted(row.skylight_id, row.occurrence_date);
 
   await updatePushedStatus(db, row.todoist_id, row.occurrence_date, 'complete');
   console.log(
@@ -781,7 +803,7 @@ export async function runCompleteProtocol(
  * Post-create: reads back the item from GET /lists/{listId} to confirm it exists.
  * Commits to 'active' with the returned item id.
  *
- * DRYRUN: no POST; commits with DRYRUN_SYNTHETIC_LIST_ID as skylight_id.
+ * DRYRUN: logs the planned action, makes zero D1 writes, returns immediately.
  */
 export async function runCreateListItemProtocol(
   client: SkylightClient,
@@ -798,6 +820,11 @@ export async function runCreateListItemProtocol(
 
   // Skip if already active
   if (existingRow?.state === 'active' && existingRow.skylight_id) {
+    return;
+  }
+
+  if (dryrun) {
+    console.log(`[skylight-sync] DRYRUN: would create list item for task ${task.id} in list ${bridgeListId}`);
     return;
   }
 
@@ -820,25 +847,8 @@ export async function runCreateListItemProtocol(
     });
   }
 
-  if (dryrun) {
-    console.log(`[skylight-sync] DRYRUN: would create list item for task ${task.id} in list ${bridgeListId}`);
-    await commitActiveRow(db, task.id, occDate, DRYRUN_SYNTHETIC_LIST_ID, label, task.id);
-    return;
-  }
-
   // POST the list item
-  let created;
-  try {
-    created = await client.createListItem(bridgeListId, label, bridgeListId);
-  } catch (err) {
-    if (err instanceof DryrRunError) {
-      // Should not happen (dryrun gated above), but handle defensively
-      console.log(`[skylight-sync] DRYRUN: would create list item for task ${task.id}`);
-      await commitActiveRow(db, task.id, occDate, DRYRUN_SYNTHETIC_LIST_ID, label, task.id);
-      return;
-    }
-    throw err;
-  }
+  const created = await client.createListItem(bridgeListId, label, bridgeListId);
 
   const itemId = created.id;
 
@@ -883,20 +893,10 @@ export async function runCompleteListItemProtocol(
 
   if (dryrun) {
     console.log(`[skylight-sync] DRYRUN: would complete list item ${row.skylight_id}`);
-    await updatePushedStatus(db, row.todoist_id, occDate, 'complete');
     return;
   }
 
-  try {
-    await client.completeListItem(bridgeListId, row.skylight_id, bridgeListId);
-  } catch (err) {
-    if (err instanceof DryrRunError) {
-      console.log(`[skylight-sync] DRYRUN: would complete list item ${row.skylight_id}`);
-      await updatePushedStatus(db, row.todoist_id, occDate, 'complete');
-      return;
-    }
-    throw err;
-  }
+  await client.completeListItem(bridgeListId, row.skylight_id, bridgeListId);
 
   // Read-back verify
   const items = await client.getListItems(bridgeListId);
@@ -946,13 +946,12 @@ export async function runDeleteListItemProtocol(
     console.log(
       `[skylight-sync] delete-list-item-protocol: row ${todoist_id} has no skylight_id — hard-deleting D1 row`
     );
-    await hardDeleteRow(db, todoist_id, occurrence_date);
+    await hardDeleteRow(db, todoist_id, occurrence_date, dryrun);
     return;
   }
 
   if (dryrun) {
     console.log(`[skylight-sync] DRYRUN: would DELETE list item ${skylight_id}`);
-    await hardDeleteRow(db, todoist_id, occurrence_date);
     return;
   }
 
@@ -970,16 +969,7 @@ export async function runDeleteListItemProtocol(
   }
 
   // Step 2: DELETE
-  try {
-    await client.deleteListItem(bridgeListId, skylight_id, bridgeListId);
-  } catch (err) {
-    if (err instanceof DryrRunError) {
-      console.log(`[skylight-sync] DRYRUN: would DELETE list item ${skylight_id}`);
-      await hardDeleteRow(db, todoist_id, occurrence_date);
-      return;
-    }
-    throw err;
-  }
+  await client.deleteListItem(bridgeListId, skylight_id, bridgeListId);
 
   // Step 3: confirm item is gone
   const itemsAfter = await client.getListItems(bridgeListId);
@@ -1151,13 +1141,13 @@ export async function runInboundListPoll(
       console.log(
         `[skylight-sync] inbound list poll: Todoist task ${row.todoist_id} not found — dropping mapping`
       );
-      await hardDeleteRow(db, row.todoist_id, row.occurrence_date);
+      await hardDeleteRow(db, row.todoist_id, row.occurrence_date, dryrun);
       continue;
     }
 
     if (task.checked) {
       // Already complete in Todoist — just update our last_pushed_status
-      await updatePushedStatus(db, row.todoist_id, row.occurrence_date, 'complete');
+      await updatePushedStatus(db, row.todoist_id, row.occurrence_date, 'complete', dryrun);
       continue;
     }
 
@@ -1166,9 +1156,8 @@ export async function runInboundListPoll(
       console.log(`[skylight-sync] DRYRUN: would close Todoist task ${row.todoist_id} (list item completed on device)`);
     } else {
       await closeTaskFn(row.todoist_id, todoistApiToken);
+      await updatePushedStatus(db, row.todoist_id, row.occurrence_date, 'complete');
     }
-
-    await updatePushedStatus(db, row.todoist_id, row.occurrence_date, 'complete');
   }
 }
 
@@ -1267,8 +1256,8 @@ export async function runInboundPass(
         continue;
       }
 
-      // §7B: per-id GET — never infer from list-absence
-      const observed = await client.getChoreById(row.skylight_id);
+      // §7B: per-id read via list — never infer from list-absence
+      const observed = await client.getChoreById(row.skylight_id, row.occurrence_date);
 
       if (observed === null) {
         // Confirmed 404 — device-side delete (§8: drop mapping, no auto-recreate)
@@ -1276,27 +1265,30 @@ export async function runInboundPass(
           `[skylight-sync] inbound: chore ${row.skylight_id} is 404 — ` +
             `device deleted it. Dropping mapping (no auto-recreate).`
         );
-        await hardDeleteRow(db, row.todoist_id, row.occurrence_date);
+        await hardDeleteRow(db, row.todoist_id, row.occurrence_date, dryrun);
         continue;
       }
 
-      // §9 Summary fingerprint detach guard — before any write confirm the live summary
-      // still matches what we stored. A diverged summary means a family member edited
-      // the chore, stripping our sentinel. Stop syncing it.
-      if (!row.expected_summary || !summaryMatchesSentinel(observed.attributes.summary, row.expected_summary)) {
+      // §9 Description-marker detach guard — before any write confirm the live chore's
+      // attributes.description still carries our ownership marker.
+      // The marker is deterministic from the todoist_id: "FPSYNC|<todoist_id>".
+      // A missing/wrong marker means the chore was replaced or the description was cleared.
+      // Stop syncing it.
+      const expectedDescMarker = choreDescriptionMarker(row.todoist_id);
+      if (!descriptionMatchesMarker(observed.attributes.description, expectedDescMarker)) {
         console.error(
-          `[skylight-sync] inbound: summary mismatch for chore ${row.skylight_id}. ` +
-            `Expected: "${row.expected_summary}", got: "${observed.attributes.summary}". ` +
+          `[skylight-sync] inbound: description marker mismatch for chore ${row.skylight_id}. ` +
+            `Expected: "${expectedDescMarker}", got: "${observed.attributes.description}". ` +
             `Marking detached — manual review needed.`
         );
-        await markDetached(db, row.todoist_id, row.occurrence_date);
+        await markDetached(db, row.todoist_id, row.occurrence_date, dryrun);
         continue;
       }
 
       const observedStatus = observed.attributes.status;
 
       // Update observed_status in D1
-      await updateObservedStatus(db, row.todoist_id, row.occurrence_date, observedStatus);
+      await updateObservedStatus(db, row.todoist_id, row.occurrence_date, observedStatus, dryrun);
 
       // Always fetch the current Todoist task by id — this captures Todoist-side completions
       // which are invisible to the open-task-list used in the outbound pass.
@@ -1310,7 +1302,7 @@ export async function runInboundPass(
         const goneActions = decideTaskGone(row);
         for (const action of goneActions) {
           if (action.type === 'DELETE_CHORE') {
-            await runDeleteProtocol(client, db, row);
+            await runDeleteProtocol(client, db, row, dryrun);
           } else if (action.type === 'DELETE_LIST_ITEM') {
             const effectiveBridgeListId = bridgeListId ?? '';
             await runDeleteListItemProtocol(client, db, row, effectiveBridgeListId, dryrun);
@@ -1343,7 +1335,7 @@ export async function runInboundPass(
           `[skylight-sync] inbound: Todoist task ${row.todoist_id} is complete but chore ` +
             `${row.skylight_id} is still pending — completing chore`
         );
-        await runCompleteProtocol(client, db, row);
+        await runCompleteProtocol(client, db, row, dryrun);
         continue;
       }
 
@@ -1357,7 +1349,7 @@ export async function runInboundPass(
       if (observedStatus === todoistStatus) {
         // Both sides already agree — update last_pushed to reflect reality so
         // a future device reopen is not mistaken for an echo. (Fix for double-completion cross.)
-        await updatePushedStatus(db, row.todoist_id, row.occurrence_date, observedStatus as 'pending' | 'complete');
+        await updatePushedStatus(db, row.todoist_id, row.occurrence_date, observedStatus as 'pending' | 'complete', dryrun);
         continue;
       }
 
@@ -1371,13 +1363,12 @@ export async function runInboundPass(
             console.log(
               `[skylight-sync] inbound: device completed chore ${row.skylight_id} — closing Todoist task ${row.todoist_id}`
             );
-            // DRYRUN gate: suppress Todoist mutation if DRYRUN is active
             if (dryrun) {
               console.log(`[skylight-sync] DRYRUN: would close Todoist task ${row.todoist_id}`);
             } else {
               await closeTaskFn(row.todoist_id, todoistApiToken);
+              await updatePushedStatus(db, row.todoist_id, row.occurrence_date, 'complete');
             }
-            await updatePushedStatus(db, row.todoist_id, row.occurrence_date, 'complete');
             break;
           }
           case 'CLOSE_AND_ROLL_TODOIST': {
@@ -1389,11 +1380,10 @@ export async function runInboundPass(
             );
 
             if (dryrun) {
-              // DRYRUN: log what would happen; do NOT actually close or roll
+              // DRYRUN: log what would happen; do NOT mutate D1 or close Todoist
               console.log(
                 `[skylight-sync] DRYRUN: would close Todoist task ${row.todoist_id} (advance) and roll occurrence`
               );
-              await updatePushedStatus(db, row.todoist_id, row.occurrence_date, 'complete');
               break;
             }
 
@@ -1446,17 +1436,12 @@ export async function runInboundPass(
             console.log(
               `[skylight-sync] inbound: device reopened chore ${row.skylight_id} but Todoist is closed — re-asserting complete`
             );
-            try {
+            if (dryrun) {
+              console.log(`[skylight-sync] DRYRUN: would re-assert complete on ${row.skylight_id}`);
+            } else {
               await client.completeChore(row.skylight_id);
-              await client.verifyCompleted(row.skylight_id);
+              await client.verifyCompleted(row.skylight_id, row.occurrence_date);
               await updatePushedStatus(db, row.todoist_id, row.occurrence_date, 'complete');
-            } catch (err) {
-              if (err instanceof DryrRunError) {
-                console.log(`[skylight-sync] DRYRUN: would re-assert complete on ${row.skylight_id}`);
-                await updatePushedStatus(db, row.todoist_id, row.occurrence_date, 'complete');
-              } else {
-                throw err;
-              }
             }
             break;
           }
@@ -1568,7 +1553,7 @@ export default {
       // Handles interrupted rolls where the prior run died after DELETE+verify but
       // before hardDeleteRow. The row is stuck in 'deleting' and invisible to the
       // normal active-row scans. This sweep resumes or hard-deletes them (major fix).
-      await runOrphanSweep(client, env.DB, frameId);
+      await runOrphanSweep(client, env.DB, frameId, dryrun);
 
       // ── Phase 2c: ensure the dedicated bridge list exists ─────────────────
       let bridgeListId: string | undefined;

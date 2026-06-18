@@ -8,6 +8,14 @@
  *   4. Create-verify rejects response where data.length !== 1
  *   5. Delete protocol aborts when re-GET summary != stored expected_summary
  *   6. Sentinel helpers: buildSummary, summaryMatchesSentinel (full string, never prefix)
+ *
+ * NOTE: buildSummary and summaryMatchesSentinel are LEGACY helpers retained for
+ * backward-compatibility tests only. Ownership is now determined exclusively via
+ * the description marker scheme: choreDescriptionMarker(todoistId) = "FPSYNC|<todoistId>",
+ * checked by descriptionMatchesMarker(). Chore titles (summaries) are clean — no
+ * sentinel embedded. See skylight-client.ts for choreDescriptionMarker /
+ * descriptionMatchesMarker, and index.ts runDeleteProtocol / runCompleteProtocol
+ * for their enforcement.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -165,7 +173,10 @@ describe('DRYRUN guard', () => {
   });
 
   it('GETs are allowed even in DRYRUN mode (getChoreById)', async () => {
-    mockGetResponse(makeChoreResponse('chore-1', 'Test ▸abc123'));
+    // getChoreById now uses the LIST endpoint — mock a list response containing the chore
+    mockGetResponse({
+      data: [makeChoreResponse('chore-1', 'Test ▸abc123').data],
+    });
 
     const client = new SkylightClient({
       frameId: 'frame-1',
@@ -173,7 +184,7 @@ describe('DRYRUN guard', () => {
       token: 'fake-token',
     });
 
-    const chore = await client.getChoreById('chore-1');
+    const chore = await client.getChoreById('chore-1', '2026-06-20');
     expect(chore).not.toBeNull();
     expect(fetchSpy).toHaveBeenCalledOnce();
     // Verify it was a GET (default method = GET, no method specified)
@@ -417,12 +428,12 @@ describe('verifyDeleted and summary mismatch guard', () => {
   });
 
   it('verifyDeleted throws when chore still exists after DELETE', async () => {
-    // Mock getChoreById → returns a chore (not 404)
+    // getChoreById now uses the LIST endpoint — mock a list response containing the chore
     fetchSpy.mockResolvedValue({
       ok: true,
       status: 200,
-      json: async () => makeChoreResponse('chore-1', 'Still here ▸abc123'),
-      text: async () => JSON.stringify(makeChoreResponse('chore-1', 'Still here ▸abc123')),
+      json: async () => ({ data: [makeChoreResponse('chore-1', 'Still here ▸abc123').data] }),
+      text: async () => JSON.stringify({ data: [makeChoreResponse('chore-1', 'Still here ▸abc123').data] }),
       headers: { get: () => null },
     } as unknown as Response);
 
@@ -432,15 +443,16 @@ describe('verifyDeleted and summary mismatch guard', () => {
       token: 'fake',
     });
 
-    await expect(client.verifyDeleted('chore-1')).rejects.toThrow(/still exists after DELETE/);
+    await expect(client.verifyDeleted('chore-1', '2026-06-20')).rejects.toThrow(/still exists after DELETE/);
   });
 
-  it('verifyDeleted resolves when chore returns 404', async () => {
-    // Mock getChoreById → 404
+  it('verifyDeleted resolves when chore is absent from the list', async () => {
+    // getChoreById now uses the LIST endpoint — mock a list response with NO matching chore
     fetchSpy.mockResolvedValue({
-      ok: false,
-      status: 404,
-      text: async () => 'Not Found',
+      ok: true,
+      status: 200,
+      json: async () => ({ data: [] }),
+      text: async () => JSON.stringify({ data: [] }),
       headers: { get: () => null },
     } as unknown as Response);
 
@@ -450,7 +462,7 @@ describe('verifyDeleted and summary mismatch guard', () => {
       token: 'fake',
     });
 
-    await expect(client.verifyDeleted('chore-1')).resolves.toBeUndefined();
+    await expect(client.verifyDeleted('chore-1', '2026-06-20')).resolves.toBeUndefined();
   });
 });
 

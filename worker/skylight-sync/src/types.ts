@@ -135,6 +135,12 @@ export interface ChoreAttributes {
   category_id: string | null;
   category_ids: string[] | null;
   up_for_grabs?: boolean;
+  /**
+   * Ownership marker written at create time: "FPSYNC|<todoistId>".
+   * Used as the ownership-verification field instead of a summary sentinel.
+   * Confirmed writable and round-trips via create_multiple + GET.
+   */
+  description?: string | null;
 }
 
 /** A single chore resource (JSON:API style) */

@@ -21,6 +21,7 @@ import type { MappingRow } from './types.js';
 import {
   buildSummary,
   sentinelToken,
+  choreDescriptionMarker,
   DRYRUN_SYNTHETIC_ID,
   SkylightClient,
 } from './skylight-client.js';
@@ -175,7 +176,7 @@ const OCCURRENCE_DATE = '2026-06-25';
 const FRAME_ID = 'frame-test';
 const PROFILE = 'kyle';
 
-function makeChoreResponse(id: string, summary: string, status = 'pending') {
+function makeChoreResponse(id: string, summary: string, status = 'pending', description?: string) {
   return {
     data: {
       id,
@@ -191,12 +192,13 @@ function makeChoreResponse(id: string, summary: string, status = 'pending') {
         reward_points: null,
         category_id: null,
         category_ids: null,
+        description: description ?? null,
       },
     },
   };
 }
 
-function makeCreateResponse(id: string, summary: string) {
+function makeCreateResponse(id: string, summary: string, description?: string) {
   return {
     data: [
       {
@@ -213,6 +215,7 @@ function makeCreateResponse(id: string, summary: string) {
           reward_points: null,
           category_id: null,
           category_ids: null,
+          description: description ?? null,
         },
       },
     ],
@@ -240,7 +243,9 @@ function makeRawTask(overrides: Partial<{
 
 function seedActiveRow(db: InMemoryD1, overrides: Partial<MappingRow> = {}): MappingRow {
   const task = makeRawTask();
-  const expected_summary = buildSummary(TASK_CONTENT, TASK_ID);
+  // Clean-title scheme: expected_summary is the task content (no sentinel).
+  // Ownership verification uses choreDescriptionMarker(TASK_ID), not summary.
+  const expected_summary = TASK_CONTENT;
   const row: MappingRow = {
     todoist_id: TASK_ID,
     fp_stable_id: null,
@@ -333,22 +338,25 @@ describe('runOutboundPass — active in-sync row must not be deleted (blocker fi
   it('(OB-2) no existing row → outbound pass creates a chore (basic create path)', async () => {
     const db = new InMemoryD1();
     const task = makeRawTask();
-    const expectedSummary = buildSummary(task.content, task.id);
+    // Clean-title scheme: summary is the clean task content; description carries the marker.
+    const cleanSummary = task.content;
+    const descMarker = choreDescriptionMarker(task.id);
 
     mockFetchDeckTasks.mockResolvedValue([task]);
 
-    // POST → create; GET → read-back
+    // POST → create response includes description marker echoed back
+    // GET via list → read-back chore with description marker confirming ownership
     fetchSpy
       .mockResolvedValueOnce({
         ok: true, status: 200,
-        json: async () => makeCreateResponse('sky-new-001', expectedSummary),
-        text: async () => JSON.stringify(makeCreateResponse('sky-new-001', expectedSummary)),
+        json: async () => makeCreateResponse('sky-new-001', cleanSummary, descMarker),
+        text: async () => JSON.stringify(makeCreateResponse('sky-new-001', cleanSummary, descMarker)),
         headers: { get: () => null },
       } as unknown as Response)
       .mockResolvedValueOnce({
         ok: true, status: 200,
-        json: async () => makeChoreResponse('sky-new-001', expectedSummary),
-        text: async () => JSON.stringify(makeChoreResponse('sky-new-001', expectedSummary)),
+        json: async () => ({ data: [{ id: 'sky-new-001', type: 'chore', attributes: { summary: cleanSummary, status: 'pending', start: OCCURRENCE_DATE, start_time: null, recurring: false, completed_on: null, emoji_icon: null, reward_points: null, category_id: null, category_ids: null, description: descMarker } }] }),
+        text: async () => JSON.stringify({ data: [{ id: 'sky-new-001', type: 'chore', attributes: { summary: cleanSummary, status: 'pending', start: OCCURRENCE_DATE, start_time: null, recurring: false, completed_on: null, emoji_icon: null, reward_points: null, category_id: null, category_ids: null, description: descMarker } }] }),
         headers: { get: () => null },
       } as unknown as Response);
 
@@ -365,6 +373,9 @@ describe('runOutboundPass — active in-sync row must not be deleted (blocker fi
     const newRow = db.getRow(TASK_ID, OCCURRENCE_DATE);
     expect(newRow?.state).toBe('active');
     expect(newRow?.skylight_id).toBe('sky-new-001');
+    // Clean title: expected_summary must be the clean content, not sentinel-appended
+    expect(newRow?.expected_summary).toBe(cleanSummary);
+    expect(newRow?.expected_summary).not.toContain('▸');
   });
 });
 
@@ -410,10 +421,11 @@ describe('runOrphanSweep — stale deleting rows (major fix)', () => {
     };
     db.rows.set(`${TASK_ID}:${OCCURRENCE_DATE}`, deletingRow as unknown as D1Row);
 
-    // GET chore → 404 (chore was already deleted)
+    // GET via list (chore absent from list → treated as gone)
     fetchSpy.mockResolvedValue({
-      ok: false, status: 404,
-      text: async () => 'Not Found',
+      ok: true, status: 200,
+      json: async () => ({ data: [] }),
+      text: async () => JSON.stringify({ data: [] }),
       headers: { get: () => null },
     } as unknown as Response);
 
@@ -433,7 +445,9 @@ describe('runOrphanSweep — stale deleting rows (major fix)', () => {
 
   it('(OB-4) deleting row with chore still existing → resumes delete protocol (DELETE issued, row cleaned up)', async () => {
     const db = new InMemoryD1();
-    const expectedSummary = buildSummary(TASK_CONTENT, TASK_ID);
+    // Clean-title scheme: expected_summary is the clean content; description carries the marker.
+    const cleanSummary = TASK_CONTENT;
+    const descMarker = choreDescriptionMarker(TASK_ID);
 
     // Seed a 'deleting' orphan row where the chore still exists
     const deletingRow: MappingRow = {
@@ -444,7 +458,7 @@ describe('runOrphanSweep — stale deleting rows (major fix)', () => {
       frame_id: FRAME_ID,
       profile: PROFILE,
       skylight_id: 'sky-orphan-002',
-      expected_summary: expectedSummary,
+      expected_summary: cleanSummary,
       last_pushed_status: 'pending',
       observed_status: 'pending',
       last_pushed_hash: null,
@@ -455,23 +469,23 @@ describe('runOrphanSweep — stale deleting rows (major fix)', () => {
     db.rows.set(`${TASK_ID}:${OCCURRENCE_DATE}`, deletingRow as unknown as D1Row);
 
     // Sequence:
-    // 1. GET in runOrphanSweep → chore exists
-    // 2. GET in runDeleteProtocol (re-GET step 1) → chore exists with matching summary
+    // 1. GET via list in runOrphanSweep → chore found in list
+    // 2. GET via list in runDeleteProtocol (re-GET step 1) → chore exists with description marker
     // 3. DELETE
-    // 4. GET verify-deleted → 404
+    // 4. GET via list verify-deleted → empty list (chore gone)
     fetchSpy
       .mockResolvedValueOnce({
-        // sweep check: chore still exists
+        // sweep check: chore still exists in list
         ok: true, status: 200,
-        json: async () => makeChoreResponse('sky-orphan-002', expectedSummary),
-        text: async () => JSON.stringify(makeChoreResponse('sky-orphan-002', expectedSummary)),
+        json: async () => ({ data: [{ id: 'sky-orphan-002', type: 'chore', attributes: { summary: cleanSummary, status: 'pending', start: OCCURRENCE_DATE, start_time: null, recurring: false, completed_on: null, emoji_icon: null, reward_points: null, category_id: null, category_ids: null, description: descMarker } }] }),
+        text: async () => JSON.stringify({ data: [{ id: 'sky-orphan-002', type: 'chore', attributes: { summary: cleanSummary, status: 'pending', start: OCCURRENCE_DATE, start_time: null, recurring: false, completed_on: null, emoji_icon: null, reward_points: null, category_id: null, category_ids: null, description: descMarker } }] }),
         headers: { get: () => null },
       } as unknown as Response)
       .mockResolvedValueOnce({
-        // delete protocol re-GET: chore exists with matching summary
+        // delete protocol re-GET via list: chore exists with description marker
         ok: true, status: 200,
-        json: async () => makeChoreResponse('sky-orphan-002', expectedSummary),
-        text: async () => JSON.stringify(makeChoreResponse('sky-orphan-002', expectedSummary)),
+        json: async () => ({ data: [{ id: 'sky-orphan-002', type: 'chore', attributes: { summary: cleanSummary, status: 'pending', start: OCCURRENCE_DATE, start_time: null, recurring: false, completed_on: null, emoji_icon: null, reward_points: null, category_id: null, category_ids: null, description: descMarker } }] }),
+        text: async () => JSON.stringify({ data: [{ id: 'sky-orphan-002', type: 'chore', attributes: { summary: cleanSummary, status: 'pending', start: OCCURRENCE_DATE, start_time: null, recurring: false, completed_on: null, emoji_icon: null, reward_points: null, category_id: null, category_ids: null, description: descMarker } }] }),
         headers: { get: () => null },
       } as unknown as Response)
       .mockResolvedValueOnce({
@@ -481,9 +495,10 @@ describe('runOrphanSweep — stale deleting rows (major fix)', () => {
         headers: { get: () => null },
       } as unknown as Response)
       .mockResolvedValueOnce({
-        // verify-deleted: 404
-        ok: false, status: 404,
-        text: async () => 'Not Found',
+        // verify-deleted via list: empty list (chore gone)
+        ok: true, status: 200,
+        json: async () => ({ data: [] }),
+        text: async () => JSON.stringify({ data: [] }),
         headers: { get: () => null },
       } as unknown as Response);
 
@@ -582,7 +597,9 @@ describe('runOutboundPass — surface migration dispatch (blocker fix)', () => {
     // Task now has NO due date (list surface) but old row is a chore
     const db = new InMemoryD1();
     const taskId = TASK_ID;
-    const choreSummary = buildSummary(TASK_CONTENT, taskId);
+    // Clean-title scheme: expected_summary is clean content; description carries the marker.
+    const cleanChoreSummary = TASK_CONTENT;
+    const descMarker = choreDescriptionMarker(taskId);
     const OLD_OCC_DATE = '2026-06-25';
 
     // Seed an active chore row with occurrence_date='2026-06-25'
@@ -594,7 +611,7 @@ describe('runOutboundPass — surface migration dispatch (blocker fix)', () => {
       frame_id: FRAME_ID,
       profile: PROFILE,
       skylight_id: 'sky-migrate-001',
-      expected_summary: choreSummary,
+      expected_summary: cleanChoreSummary,
       last_pushed_status: 'pending',
       observed_status: 'pending',
       last_pushed_hash: null,
@@ -611,16 +628,16 @@ describe('runOutboundPass — surface migration dispatch (blocker fix)', () => {
     const label = buildListItemLabel(TASK_CONTENT, taskId);
 
     // HTTP sequence (chore→list migration):
-    // 1. GET chore (delete re-confirm in runDeleteProtocol)
+    // 1. GET via list (delete re-confirm in runDeleteProtocol) — must include description marker
     // 2. DELETE chore
-    // 3. GET chore verify-deleted → 404
+    // 3. GET via list verify-deleted → empty list (chore gone)
     // 4. POST create list item
     // 5. GET list (read-back verify)
     fetchSpy
       .mockResolvedValueOnce({
         ok: true, status: 200,
-        json: async () => makeChoreResponse('sky-migrate-001', choreSummary),
-        text: async () => JSON.stringify(makeChoreResponse('sky-migrate-001', choreSummary)),
+        json: async () => ({ data: [{ id: 'sky-migrate-001', type: 'chore', attributes: { summary: cleanChoreSummary, status: 'pending', start: OLD_OCC_DATE, start_time: null, recurring: false, completed_on: null, emoji_icon: null, reward_points: null, category_id: null, category_ids: null, description: descMarker } }] }),
+        text: async () => JSON.stringify({ data: [{ id: 'sky-migrate-001', type: 'chore', attributes: { summary: cleanChoreSummary, status: 'pending', start: OLD_OCC_DATE, start_time: null, recurring: false, completed_on: null, emoji_icon: null, reward_points: null, category_id: null, category_ids: null, description: descMarker } }] }),
         headers: { get: () => null },
       } as unknown as Response)
       .mockResolvedValueOnce({
@@ -629,8 +646,9 @@ describe('runOutboundPass — surface migration dispatch (blocker fix)', () => {
         headers: { get: () => null },
       } as unknown as Response)
       .mockResolvedValueOnce({
-        ok: false, status: 404,
-        text: async () => 'Not Found',
+        ok: true, status: 200,
+        json: async () => ({ data: [] }),
+        text: async () => JSON.stringify({ data: [] }),
         headers: { get: () => null },
       } as unknown as Response)
       .mockResolvedValueOnce({
@@ -679,8 +697,10 @@ describe('runOutboundPass — surface migration dispatch (blocker fix)', () => {
     // Task now HAS a due date (chore surface) but old row is a list item
     const db = new InMemoryD1();
     const taskId = TASK_ID;
+    // Clean-title scheme: list item label is clean content; new chore has clean summary + description marker.
     const label = buildListItemLabel(TASK_CONTENT, taskId);
-    const choreSummary = buildSummary(TASK_CONTENT, taskId);
+    const cleanChoreSummary = TASK_CONTENT;
+    const descMarker = choreDescriptionMarker(taskId);
 
     // Seed an active list row with occurrence_date=''
     const listRow: MappingRow = {
@@ -709,8 +729,8 @@ describe('runOutboundPass — surface migration dispatch (blocker fix)', () => {
     // 1. GET list before delete (verify item exists)
     // 2. DELETE list item
     // 3. GET list after delete (verify item gone)
-    // 4. POST create chore
-    // 5. GET chore (read-back verify)
+    // 4. POST create chore — returns description marker echoed back
+    // 5. GET chore (read-back verify) — includes description marker
     fetchSpy
       .mockResolvedValueOnce({
         ok: true, status: 200,
@@ -731,14 +751,14 @@ describe('runOutboundPass — surface migration dispatch (blocker fix)', () => {
       } as unknown as Response)
       .mockResolvedValueOnce({
         ok: true, status: 200,
-        json: async () => makeCreateResponse('sky-migrate-002', choreSummary),
-        text: async () => JSON.stringify(makeCreateResponse('sky-migrate-002', choreSummary)),
+        json: async () => makeCreateResponse('sky-migrate-002', cleanChoreSummary, descMarker),
+        text: async () => JSON.stringify(makeCreateResponse('sky-migrate-002', cleanChoreSummary, descMarker)),
         headers: { get: () => null },
       } as unknown as Response)
       .mockResolvedValueOnce({
         ok: true, status: 200,
-        json: async () => makeChoreResponse('sky-migrate-002', choreSummary),
-        text: async () => JSON.stringify(makeChoreResponse('sky-migrate-002', choreSummary)),
+        json: async () => ({ data: [{ id: 'sky-migrate-002', type: 'chore', attributes: { summary: cleanChoreSummary, status: 'pending', start: OCCURRENCE_DATE, start_time: null, recurring: false, completed_on: null, emoji_icon: null, reward_points: null, category_id: null, category_ids: null, description: descMarker } }] }),
+        text: async () => JSON.stringify({ data: [{ id: 'sky-migrate-002', type: 'chore', attributes: { summary: cleanChoreSummary, status: 'pending', start: OCCURRENCE_DATE, start_time: null, recurring: false, completed_on: null, emoji_icon: null, reward_points: null, category_id: null, category_ids: null, description: descMarker } }] }),
         headers: { get: () => null },
       } as unknown as Response);
 
@@ -769,5 +789,56 @@ describe('runOutboundPass — surface migration dispatch (blocker fix)', () => {
 
     // Total D1 rows: only the new chore row (old list row deleted, no duplicates)
     expect(db.allRows().filter((r) => r.todoist_id === taskId)).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: runOutboundPass DRYRUN with multiple deck tasks — UNIQUE-constraint fix
+// ---------------------------------------------------------------------------
+
+describe('runOutboundPass DRYRUN — multiple tasks must not cause UNIQUE constraint violations', () => {
+  let fetchSpy: ReturnType<typeof vi.fn>;
+  let originalFetch: typeof globalThis.fetch;
+
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+    fetchSpy = vi.fn();
+    globalThis.fetch = fetchSpy;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
+    mockFetchDeckTasks.mockReset();
+  });
+
+  it('(OB-DRYRUN) 3 new deck tasks under DRYRUN: no error, zero D1 writes, zero non-GET fetches', async () => {
+    const db = new InMemoryD1();
+
+    // Three brand-new tasks with due dates (will take the "chore create" path)
+    const tasks = [
+      makeRawTask({ id: 'task-dry-001', content: 'Task Alpha', due: { date: OCCURRENCE_DATE, string: 'Jun 25', is_recurring: false } }),
+      makeRawTask({ id: 'task-dry-002', content: 'Task Beta',  due: { date: OCCURRENCE_DATE, string: 'Jun 25', is_recurring: false } }),
+      makeRawTask({ id: 'task-dry-003', content: 'Task Gamma', due: { date: OCCURRENCE_DATE, string: 'Jun 25', is_recurring: false } }),
+    ];
+    mockFetchDeckTasks.mockResolvedValue(tasks);
+
+    // DRYRUN: no HTTP calls expected, so fetchSpy should never be called for mutating ops
+    const client = new SkylightClient({ frameId: FRAME_ID, dryrun: true, token: 'tok' });
+    const env = { ...makeEnv(), DRYRUN: 'true' };
+
+    // (a) must NOT throw — previously this caused UNIQUE constraint violation on task 2+
+    await expect(
+      runOutboundPass(client, db.asD1(), env, FRAME_ID, PROFILE, null, 'America/New_York')
+    ).resolves.toBeUndefined();
+
+    // (b) zero mapping-mutation D1 writes — the whole table must stay empty
+    expect(db.allRows()).toHaveLength(0);
+
+    // (c) zero non-GET (mutating) fetches issued to Skylight
+    const mutatingCalls = (fetchSpy.mock.calls as [string, RequestInit | undefined][]).filter(
+      ([, opts]) => opts?.method === 'POST' || opts?.method === 'PUT' || opts?.method === 'DELETE'
+    );
+    expect(mutatingCalls).toHaveLength(0);
   });
 });

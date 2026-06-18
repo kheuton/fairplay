@@ -107,11 +107,20 @@ export async function getMappingsByTodoistId(
  * Write-ahead intent: insert a 'creating' row BEFORE the HTTP POST.
  * If a row already exists (e.g., from a partial prior run), leave it unless
  * state is 'creating' (idempotent resume).
+ *
+ * DRYRUN: no-ops — logs intent and returns without persisting.
  */
 export async function insertCreatingRow(
   db: D1Database,
-  row: Omit<MappingRow, 'updated_at'>
+  row: Omit<MappingRow, 'updated_at'>,
+  dryrun = false
 ): Promise<void> {
+  if (dryrun) {
+    console.log(
+      `[db] DRYRUN: would insertCreatingRow ${row.todoist_id}/${row.occurrence_date}`
+    );
+    return;
+  }
   const now = Math.floor(Date.now() / 1000);
   await db
     .prepare(
@@ -143,6 +152,8 @@ export async function insertCreatingRow(
 
 /**
  * Commit a row to 'active' after a successful create + read-back.
+ *
+ * DRYRUN: no-ops — logs intent and returns without persisting.
  */
 export async function commitActiveRow(
   db: D1Database,
@@ -150,8 +161,15 @@ export async function commitActiveRow(
   occurrenceDate: string,
   skylightId: string,
   expectedSummary: string,
-  lastPushedHash: string
+  lastPushedHash: string,
+  dryrun = false
 ): Promise<void> {
+  if (dryrun) {
+    console.log(
+      `[db] DRYRUN: would commitActiveRow ${todoistId}/${occurrenceDate} skylightId=${skylightId}`
+    );
+    return;
+  }
   const now = Math.floor(Date.now() / 1000);
   await db
     .prepare(
@@ -164,12 +182,21 @@ export async function commitActiveRow(
     .run();
 }
 
-/** Mark a row as needs_review (create mismatch, sentinel mismatch, etc.). */
+/**
+ * Mark a row as needs_review (create mismatch, sentinel mismatch, etc.).
+ *
+ * DRYRUN: no-ops.
+ */
 export async function markNeedsReview(
   db: D1Database,
   todoistId: string,
-  occurrenceDate: string
+  occurrenceDate: string,
+  dryrun = false
 ): Promise<void> {
+  if (dryrun) {
+    console.log(`[db] DRYRUN: would markNeedsReview ${todoistId}/${occurrenceDate}`);
+    return;
+  }
   const now = Math.floor(Date.now() / 1000);
   await db
     .prepare(
@@ -180,12 +207,21 @@ export async function markNeedsReview(
     .run();
 }
 
-/** Mark a row as detached (on-device summary diverged from expected_summary). */
+/**
+ * Mark a row as detached (on-device summary diverged from expected_summary).
+ *
+ * DRYRUN: no-ops.
+ */
 export async function markDetached(
   db: D1Database,
   todoistId: string,
-  occurrenceDate: string
+  occurrenceDate: string,
+  dryrun = false
 ): Promise<void> {
+  if (dryrun) {
+    console.log(`[db] DRYRUN: would markDetached ${todoistId}/${occurrenceDate}`);
+    return;
+  }
   const now = Math.floor(Date.now() / 1000);
   await db
     .prepare(
@@ -196,13 +232,22 @@ export async function markDetached(
     .run();
 }
 
-/** Update last_pushed_status after a completeChore write. */
+/**
+ * Update last_pushed_status after a completeChore write.
+ *
+ * DRYRUN: no-ops.
+ */
 export async function updatePushedStatus(
   db: D1Database,
   todoistId: string,
   occurrenceDate: string,
-  status: 'pending' | 'complete'
+  status: 'pending' | 'complete',
+  dryrun = false
 ): Promise<void> {
+  if (dryrun) {
+    console.log(`[db] DRYRUN: would updatePushedStatus ${todoistId}/${occurrenceDate} → ${status}`);
+    return;
+  }
   const now = Math.floor(Date.now() / 1000);
   await db
     .prepare(
@@ -213,13 +258,22 @@ export async function updatePushedStatus(
     .run();
 }
 
-/** Update observed_status after an inbound GET. */
+/**
+ * Update observed_status after an inbound GET.
+ *
+ * DRYRUN: no-ops.
+ */
 export async function updateObservedStatus(
   db: D1Database,
   todoistId: string,
   occurrenceDate: string,
-  observedStatus: string
+  observedStatus: string,
+  dryrun = false
 ): Promise<void> {
+  if (dryrun) {
+    console.log(`[db] DRYRUN: would updateObservedStatus ${todoistId}/${occurrenceDate} → ${observedStatus}`);
+    return;
+  }
   const now = Math.floor(Date.now() / 1000);
   await db
     .prepare(
@@ -230,13 +284,22 @@ export async function updateObservedStatus(
     .run();
 }
 
-/** Update last_pushed_hash after a content update. */
+/**
+ * Update last_pushed_hash after a content update.
+ *
+ * DRYRUN: no-ops.
+ */
 export async function updatePushedHash(
   db: D1Database,
   todoistId: string,
   occurrenceDate: string,
-  hash: string
+  hash: string,
+  dryrun = false
 ): Promise<void> {
+  if (dryrun) {
+    console.log(`[db] DRYRUN: would updatePushedHash ${todoistId}/${occurrenceDate}`);
+    return;
+  }
   const now = Math.floor(Date.now() / 1000);
   await db
     .prepare(
@@ -247,12 +310,21 @@ export async function updatePushedHash(
     .run();
 }
 
-/** Begin a delete: set state='deleting'. */
+/**
+ * Begin a delete: set state='deleting'.
+ *
+ * DRYRUN: no-ops.
+ */
 export async function markDeleting(
   db: D1Database,
   todoistId: string,
-  occurrenceDate: string
+  occurrenceDate: string,
+  dryrun = false
 ): Promise<void> {
+  if (dryrun) {
+    console.log(`[db] DRYRUN: would markDeleting ${todoistId}/${occurrenceDate}`);
+    return;
+  }
   const now = Math.floor(Date.now() / 1000);
   await db
     .prepare(
@@ -266,12 +338,19 @@ export async function markDeleting(
 /**
  * Hard-delete a row (only after Skylight confirms 404).
  * §9: hard-delete so a stale row can never re-match a reused id.
+ *
+ * DRYRUN: no-ops.
  */
 export async function hardDeleteRow(
   db: D1Database,
   todoistId: string,
-  occurrenceDate: string
+  occurrenceDate: string,
+  dryrun = false
 ): Promise<void> {
+  if (dryrun) {
+    console.log(`[db] DRYRUN: would hardDeleteRow ${todoistId}/${occurrenceDate}`);
+    return;
+  }
   await db
     .prepare('DELETE FROM mapping WHERE todoist_id = ? AND occurrence_date = ?')
     .bind(todoistId, occurrenceDate)
@@ -316,14 +395,23 @@ export async function getActiveMappingsBySurface(
  *
  * IMPORTANT: the old row is deleted AFTER the new row is inserted so that a
  * crash between the two leaves a 'creating' row (resumable) rather than no row.
+ *
+ * DRYRUN: no-ops.
  */
 export async function rollOccurrenceDate(
   db: D1Database,
   oldRow: MappingRow,
   newOccurrenceDate: string,
   newIdemToken: string,
-  newExpectedSummary: string
+  newExpectedSummary: string,
+  dryrun = false
 ): Promise<void> {
+  if (dryrun) {
+    console.log(
+      `[db] DRYRUN: would rollOccurrenceDate ${oldRow.todoist_id} ${oldRow.occurrence_date} → ${newOccurrenceDate}`
+    );
+    return;
+  }
   const now = Math.floor(Date.now() / 1000);
 
   // Insert new 'creating' row for the next occurrence

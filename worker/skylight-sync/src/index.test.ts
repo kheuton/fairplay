@@ -21,6 +21,8 @@ import type { MappingRow } from './types.js';
 import {
   buildSummary,
   sentinelToken,
+  choreDescriptionMarker,
+  descriptionMatchesMarker,
   DRYRUN_SYNTHETIC_ID,
   SkylightClient,
   SKYLIGHT_BASE,
@@ -182,7 +184,7 @@ class InMemoryD1 {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeChoreResponse(id: string, summary: string, status = 'pending') {
+function makeChoreResponse(id: string, summary: string, status = 'pending', description?: string | null) {
   return {
     data: {
       id,
@@ -198,12 +200,13 @@ function makeChoreResponse(id: string, summary: string, status = 'pending') {
         reward_points: null,
         category_id: null,
         category_ids: null,
+        description: description ?? null,
       },
     },
   };
 }
 
-function makeCreateResponse(id: string, summary: string) {
+function makeCreateResponse(id: string, summary: string, description?: string | null) {
   return {
     data: [
       {
@@ -220,13 +223,14 @@ function makeCreateResponse(id: string, summary: string) {
           reward_points: null,
           category_id: null,
           category_ids: null,
+          description: description ?? null,
         },
       },
     ],
   };
 }
 
-function makeListResponse(items: Array<{ id: string; summary: string; status?: string }>) {
+function makeListResponse(items: Array<{ id: string; summary: string; status?: string; description?: string }>) {
   return {
     data: items.map((i) => ({
       id: i.id,
@@ -242,6 +246,7 @@ function makeListResponse(items: Array<{ id: string; summary: string; status?: s
         reward_points: null,
         category_id: null,
         category_ids: null,
+        description: i.description ?? null,
       },
     })),
   };
@@ -287,6 +292,318 @@ function makeRawTask(overrides: Partial<{
 }
 
 // ---------------------------------------------------------------------------
+// Tests: ownership-guard adversarial cases (clean-title scheme)
+// These drive the REAL exported functions and prove the worker NEVER
+// completes/deletes a chore it does not own when the description marker is
+// missing/wrong (e.g. a family-edited or id-reused chore).
+// ---------------------------------------------------------------------------
+
+describe('ownership guard — description marker (adversarial)', () => {
+  let fetchSpy: ReturnType<typeof vi.fn>;
+  let originalFetch: typeof globalThis.fetch;
+
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+    fetchSpy = vi.fn();
+    globalThis.fetch = fetchSpy;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  function seedActiveChoreRow(db: InMemoryD1, overrides: Partial<MappingRow> = {}): MappingRow {
+    const row: MappingRow = {
+      todoist_id: TASK_ID,
+      fp_stable_id: null,
+      occurrence_date: OCCURRENCE_DATE,
+      surface: 'chore',
+      frame_id: FRAME_ID,
+      profile: PROFILE,
+      skylight_id: 'sky-001',
+      expected_summary: TASK_CONTENT,
+      last_pushed_status: 'pending',
+      observed_status: 'pending',
+      last_pushed_hash: null,
+      state: 'active',
+      idem_token: sentinelToken(TASK_ID),
+      updated_at: null,
+      ...overrides,
+    };
+    db.rows.set(`${row.todoist_id}:${row.occurrence_date}`, row as unknown as D1Row);
+    return row;
+  }
+
+  it('(own-marker) descriptionMatchesMarker is exact + deterministic + collision-resistant', () => {
+    // Deterministic from the Todoist id
+    expect(choreDescriptionMarker(TASK_ID)).toBe(`FPSYNC|${TASK_ID}`);
+    expect(choreDescriptionMarker('x')).toBe('FPSYNC|x');
+    // Exact match only
+    const marker = choreDescriptionMarker(TASK_ID);
+    expect(descriptionMatchesMarker(marker, marker)).toBe(true);
+    // A markerless family chore (null / '' description) is NEVER ours
+    expect(descriptionMatchesMarker(null, marker)).toBe(false);
+    expect(descriptionMatchesMarker(undefined, marker)).toBe(false);
+    expect(descriptionMatchesMarker('', marker)).toBe(false);
+    // Free-text family description that merely contains the marker is rejected (no substring/prefix match)
+    expect(descriptionMatchesMarker(`note ${marker}`, marker)).toBe(false);
+    expect(descriptionMatchesMarker(`${marker} `, marker)).toBe(false);
+    // Marker for a DIFFERENT (id-reused) task is rejected
+    expect(descriptionMatchesMarker(choreDescriptionMarker('other-task'), marker)).toBe(false);
+  });
+
+  it('(own-delete-abort) runDeleteProtocol on a chore with WRONG/missing marker → detach, ZERO DELETE', async () => {
+    const db = new InMemoryD1();
+    const row = seedActiveChoreRow(db, { state: 'active' });
+
+    // Re-GET (via list) returns a chore that exists but carries NO ownership marker
+    // (e.g. an id-reused slot now holding a family chore, or marker cleared).
+    fetchSpy.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => makeListResponse([{ id: 'sky-001', summary: 'Family dinner', status: 'pending', description: undefined }]),
+      text: async () => JSON.stringify(makeListResponse([{ id: 'sky-001', summary: 'Family dinner', status: 'pending', description: undefined }])),
+      headers: { get: () => null },
+    } as unknown as Response);
+
+    const client = new SkylightClient({ frameId: FRAME_ID, dryrun: false, token: 'tok' });
+
+    await runDeleteProtocol(client, db.asD1(), row);
+
+    // Row detached, NOT hard-deleted
+    const finalRow = db.getRow(TASK_ID, OCCURRENCE_DATE);
+    expect(finalRow?.state).toBe('detached');
+
+    // CRITICAL: no DELETE / PUT issued against the non-owned chore
+    const mutating = (fetchSpy.mock.calls as [string, RequestInit | undefined][]).filter(
+      ([, opts]) => opts?.method === 'DELETE' || opts?.method === 'PUT'
+    );
+    expect(mutating).toHaveLength(0);
+  });
+
+  it('(own-delete-abort-2) runDeleteProtocol when marker belongs to a DIFFERENT task id → detach, ZERO DELETE', async () => {
+    const db = new InMemoryD1();
+    const row = seedActiveChoreRow(db, { state: 'active' });
+
+    // Chore exists and HAS a FairPlay marker — but for a different Todoist id (id reuse).
+    const foreignMarker = choreDescriptionMarker('some-other-task-999');
+    fetchSpy.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => makeListResponse([{ id: 'sky-001', summary: 'Someone elses chore', status: 'pending', description: foreignMarker }]),
+      text: async () => JSON.stringify(makeListResponse([{ id: 'sky-001', summary: 'Someone elses chore', status: 'pending', description: foreignMarker }])),
+      headers: { get: () => null },
+    } as unknown as Response);
+
+    const client = new SkylightClient({ frameId: FRAME_ID, dryrun: false, token: 'tok' });
+
+    await runDeleteProtocol(client, db.asD1(), row);
+
+    expect(db.getRow(TASK_ID, OCCURRENCE_DATE)?.state).toBe('detached');
+    const mutating = (fetchSpy.mock.calls as [string, RequestInit | undefined][]).filter(
+      ([, opts]) => opts?.method === 'DELETE' || opts?.method === 'PUT'
+    );
+    expect(mutating).toHaveLength(0);
+  });
+
+  it('(own-create-reject) createChore rejects when returned description != expected marker', async () => {
+    // Create response echoes a DIFFERENT/empty description — the API silently
+    // dropped our marker, or returned a foreign chore. Must throw (→ needs_review).
+    const descMarker = choreDescriptionMarker(TASK_ID);
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => makeCreateResponse('sky-new', TASK_CONTENT, null),
+      text: async () => JSON.stringify(makeCreateResponse('sky-new', TASK_CONTENT, null)),
+      headers: { get: () => null },
+    } as unknown as Response);
+
+    const client = new SkylightClient({ frameId: FRAME_ID, dryrun: false, token: 'tok' });
+
+    await expect(
+      client.createChore({
+        summary: TASK_CONTENT,
+        start: OCCURRENCE_DATE,
+        categoryId: null,
+        idemToken: sentinelToken(TASK_ID),
+        description: descMarker,
+      })
+    ).rejects.toThrow(/does not match/);
+  });
+
+  it('(own-create-verify-reject) runCreateProtocol → needs_review when create echoes wrong marker', async () => {
+    const db = new InMemoryD1();
+    const task = makeRawTask();
+    const wrongMarker = choreDescriptionMarker('attacker-task');
+
+    // POST create response carries a FOREIGN marker (createChore must throw).
+    fetchSpy.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => makeCreateResponse('sky-001', task.content, wrongMarker),
+      text: async () => JSON.stringify(makeCreateResponse('sky-001', task.content, wrongMarker)),
+      headers: { get: () => null },
+    } as unknown as Response);
+
+    const client = new SkylightClient({ frameId: FRAME_ID, dryrun: false, token: 'tok' });
+
+    // createChore throws inside runCreateProtocol; the write-ahead 'creating' row
+    // remains (no active commit, no skylight_id) — it is never promoted to a
+    // state where a delete/complete could fire against an unverified chore.
+    await expect(
+      runCreateProtocol(client, db.asD1(), task, null, FRAME_ID, PROFILE, OCCURRENCE_DATE, null, 'America/New_York')
+    ).rejects.toThrow(/does not match/);
+
+    const row = db.getRow(task.id, OCCURRENCE_DATE);
+    // Must NOT have reached 'active' with a skylight_id off a non-matching marker
+    expect(row?.state).not.toBe('active');
+    expect(row?.skylight_id ?? null).toBeNull();
+  });
+
+  // ---------------------------------------------------------------------------
+  // runCompleteProtocol ownership guard (the gap closed in this diff)
+  // ---------------------------------------------------------------------------
+
+  it('(own-complete-abort) runCompleteProtocol on a chore with WRONG/missing marker → detach, ZERO PUT', async () => {
+    // Re-GET (via list) returns a chore that exists but carries NO ownership marker
+    // (e.g. an id-reused slot now holding a family chore, or marker cleared).
+    const db = new InMemoryD1();
+    const row = seedActiveChoreRow(db, { state: 'active' });
+
+    fetchSpy.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => makeListResponse([{ id: 'sky-001', summary: 'Family dinner', status: 'pending', description: undefined }]),
+      text: async () => JSON.stringify(makeListResponse([{ id: 'sky-001', summary: 'Family dinner', status: 'pending', description: undefined }])),
+      headers: { get: () => null },
+    } as unknown as Response);
+
+    const client = new SkylightClient({ frameId: FRAME_ID, dryrun: false, token: 'tok' });
+
+    await runCompleteProtocol(client, db.asD1(), row);
+
+    // Row should be detached, NOT marked complete
+    const finalRow = db.getRow(TASK_ID, OCCURRENCE_DATE);
+    expect(finalRow?.state).toBe('detached');
+    // last_pushed_status must NOT have been updated to 'complete'
+    expect(finalRow?.last_pushed_status).not.toBe('complete');
+
+    // CRITICAL: no PUT issued against the non-owned chore
+    const putCalls = (fetchSpy.mock.calls as [string, RequestInit | undefined][]).filter(
+      ([, opts]) => opts?.method === 'PUT'
+    );
+    expect(putCalls).toHaveLength(0);
+  });
+
+  it('(own-complete-abort-2) runCompleteProtocol with marker belonging to a DIFFERENT task → detach, ZERO PUT', async () => {
+    // Chore exists and HAS a FairPlay marker — but for a different Todoist id (id reuse).
+    const db = new InMemoryD1();
+    const row = seedActiveChoreRow(db, { state: 'active' });
+    const foreignMarker = choreDescriptionMarker('some-other-task-999');
+
+    fetchSpy.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => makeListResponse([{ id: 'sky-001', summary: 'Someone elses chore', status: 'pending', description: foreignMarker }]),
+      text: async () => JSON.stringify(makeListResponse([{ id: 'sky-001', summary: 'Someone elses chore', status: 'pending', description: foreignMarker }])),
+      headers: { get: () => null },
+    } as unknown as Response);
+
+    const client = new SkylightClient({ frameId: FRAME_ID, dryrun: false, token: 'tok' });
+
+    await runCompleteProtocol(client, db.asD1(), row);
+
+    expect(db.getRow(TASK_ID, OCCURRENCE_DATE)?.state).toBe('detached');
+    const putCalls = (fetchSpy.mock.calls as [string, RequestInit | undefined][]).filter(
+      ([, opts]) => opts?.method === 'PUT'
+    );
+    expect(putCalls).toHaveLength(0);
+  });
+
+  it('(own-complete-ok) runCompleteProtocol with matching marker → completeChore IS called', async () => {
+    // Positive test: when the live chore carries the correct ownership marker,
+    // completeChore must be issued and the D1 row updated to complete.
+    const db = new InMemoryD1();
+    const row = seedActiveChoreRow(db, { state: 'active' });
+    const correctMarker = choreDescriptionMarker(TASK_ID);
+
+    fetchSpy
+      // re-GET via list (ownership check)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => makeListResponse([{ id: 'sky-001', summary: row.expected_summary!, status: 'pending', description: correctMarker }]),
+        text: async () => JSON.stringify(makeListResponse([{ id: 'sky-001', summary: row.expected_summary!, status: 'pending', description: correctMarker }])),
+        headers: { get: () => null },
+      } as unknown as Response)
+      // PUT completeChore
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => makeChoreResponse('sky-001', row.expected_summary!, 'complete', correctMarker),
+        text: async () => JSON.stringify(makeChoreResponse('sky-001', row.expected_summary!, 'complete', correctMarker)),
+        headers: { get: () => null },
+      } as unknown as Response)
+      // GET verifyCompleted (via list)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => makeListResponse([{ id: 'sky-001', summary: row.expected_summary!, status: 'complete', description: correctMarker }]),
+        text: async () => JSON.stringify(makeListResponse([{ id: 'sky-001', summary: row.expected_summary!, status: 'complete', description: correctMarker }])),
+        headers: { get: () => null },
+      } as unknown as Response);
+
+    const client = new SkylightClient({ frameId: FRAME_ID, dryrun: false, token: 'tok' });
+
+    await runCompleteProtocol(client, db.asD1(), row);
+
+    // Row should be updated to complete, NOT detached
+    const finalRow = db.getRow(TASK_ID, OCCURRENCE_DATE);
+    expect(finalRow?.last_pushed_status).toBe('complete');
+    expect(finalRow?.state).not.toBe('detached');
+
+    // Exactly one PUT must have been issued (the complete)
+    const putCalls = (fetchSpy.mock.calls as [string, RequestInit | undefined][]).filter(
+      ([, opts]) => opts?.method === 'PUT'
+    );
+    expect(putCalls).toHaveLength(1);
+  });
+
+  it('(own-complete-dryrun) DRYRUN: ownership re-GET fires but zero PUT issued, D1 not mutated', async () => {
+    // Under dryrun, the re-GET still happens (ownership check) but no PUT is issued
+    // and D1 is NOT updated — consistent with runDeleteProtocol dryrun behavior.
+    const db = new InMemoryD1();
+    const row = seedActiveChoreRow(db, { state: 'active' });
+    const correctMarker = choreDescriptionMarker(TASK_ID);
+
+    // re-GET via list returns matching marker
+    fetchSpy.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => makeListResponse([{ id: 'sky-001', summary: row.expected_summary!, status: 'pending', description: correctMarker }]),
+      text: async () => JSON.stringify(makeListResponse([{ id: 'sky-001', summary: row.expected_summary!, status: 'pending', description: correctMarker }])),
+      headers: { get: () => null },
+    } as unknown as Response);
+
+    const client = new SkylightClient({ frameId: FRAME_ID, dryrun: false, token: 'tok' });
+
+    await runCompleteProtocol(client, db.asD1(), row, true /* dryrun */);
+
+    // No PUT must have been issued
+    const putCalls = (fetchSpy.mock.calls as [string, RequestInit | undefined][]).filter(
+      ([, opts]) => opts?.method === 'PUT'
+    );
+    expect(putCalls).toHaveLength(0);
+
+    // D1 must NOT be mutated — last_pushed_status stays at original 'pending'
+    const finalRow = db.getRow(TASK_ID, OCCURRENCE_DATE);
+    expect(finalRow?.last_pushed_status).toBe('pending');
+    expect(finalRow?.state).toBe('active');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Tests: runCreateProtocol (the REAL function from index.ts)
 // ---------------------------------------------------------------------------
 
@@ -308,23 +625,25 @@ describe('runCreateProtocol — integration', () => {
   it('(a) successful create commits exactly one active row with the correct summary', async () => {
     const db = new InMemoryD1();
     const task = makeRawTask();
-    const expectedSummary = buildSummary(task.content, task.id);
-    const idemToken = sentinelToken(task.id);
+    // Clean-title scheme: summary is the clean task content; description carries the marker.
+    const cleanSummary = task.content;
+    const descMarker = choreDescriptionMarker(task.id);
 
-    // POST → create response; GET (read-back) → chore with correct summary
+    // POST → create response includes description marker echoed back
+    // GET (read-back via list) → chore with description marker confirming ownership
     fetchSpy
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
-        json: async () => makeCreateResponse('sky-001', expectedSummary),
-        text: async () => JSON.stringify(makeCreateResponse('sky-001', expectedSummary)),
+        json: async () => makeCreateResponse('sky-001', cleanSummary, descMarker),
+        text: async () => JSON.stringify(makeCreateResponse('sky-001', cleanSummary, descMarker)),
         headers: { get: () => null },
       } as unknown as Response)
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
-        json: async () => makeChoreResponse('sky-001', expectedSummary),
-        text: async () => JSON.stringify(makeChoreResponse('sky-001', expectedSummary)),
+        json: async () => makeListResponse([{ id: 'sky-001', summary: cleanSummary, status: 'pending', description: descMarker }]),
+        text: async () => JSON.stringify(makeListResponse([{ id: 'sky-001', summary: cleanSummary, status: 'pending', description: descMarker }])),
         headers: { get: () => null },
       } as unknown as Response);
 
@@ -336,7 +655,9 @@ describe('runCreateProtocol — integration', () => {
     expect(row).toBeDefined();
     expect(row?.state).toBe('active');
     expect(row?.skylight_id).toBe('sky-001');
-    expect(row?.expected_summary).toBe(expectedSummary);
+    // Clean title: expected_summary must NOT contain the visible sentinel glyph
+    expect(row?.expected_summary).toBe(cleanSummary);
+    expect(row?.expected_summary).not.toContain('▸');
     expect(row?.last_pushed_status).toBe('pending');
 
     // Only one POST
@@ -345,8 +666,11 @@ describe('runCreateProtocol — integration', () => {
     );
     expect(postCalls).toHaveLength(1);
 
-    // Verify the idemToken embedded in summary IS the sentinelToken
-    expect(expectedSummary).toContain(idemToken);
+    // Verify POST body contains description marker and clean summary (no sentinel)
+    const postBody = JSON.parse((postCalls[0][1]?.body as string) ?? '{}') as Record<string, unknown>;
+    expect(postBody['description']).toBe(descMarker);
+    expect(postBody['summary']).toBe(cleanSummary);
+    expect(String(postBody['summary'])).not.toContain('▸');
   });
 
   it('(a) idemToken passed to createChore equals sentinelToken(task.id)', async () => {
@@ -374,7 +698,9 @@ describe('runCreateProtocol — integration', () => {
   it('(b) interrupted create (creating row, null skylight_id) resumes without re-POSTing', async () => {
     const db = new InMemoryD1();
     const task = makeRawTask();
-    const expectedSummary = buildSummary(task.content, task.id);
+    // Clean-title scheme: recovery scans by description marker, not summary.
+    const cleanSummary = task.content;
+    const descMarker = choreDescriptionMarker(task.id);
 
     // Simulate an existing 'creating' row with no skylight_id (interrupted create)
     const existingRow: MappingRow = {
@@ -385,7 +711,7 @@ describe('runCreateProtocol — integration', () => {
       frame_id: FRAME_ID,
       profile: PROFILE,
       skylight_id: null,
-      expected_summary: expectedSummary,
+      expected_summary: cleanSummary,
       last_pushed_status: null,
       observed_status: null,
       last_pushed_hash: null,
@@ -397,12 +723,13 @@ describe('runCreateProtocol — integration', () => {
     // Pre-seed the row in the D1 mock
     db.rows.set(`${task.id}:${OCCURRENCE_DATE}`, existingRow as unknown as D1Row);
 
-    // The chore already exists on Skylight from the interrupted run — returned by listChores
+    // The chore already exists on Skylight from the interrupted run — found by description marker scan.
+    // The listChores response includes the chore with its description marker.
     fetchSpy.mockResolvedValueOnce({
       ok: true,
       status: 200,
-      json: async () => makeListResponse([{ id: 'sky-rescued', summary: expectedSummary }]),
-      text: async () => JSON.stringify(makeListResponse([{ id: 'sky-rescued', summary: expectedSummary }])),
+      json: async () => makeListResponse([{ id: 'sky-rescued', summary: cleanSummary, description: descMarker }]),
+      text: async () => JSON.stringify(makeListResponse([{ id: 'sky-rescued', summary: cleanSummary, description: descMarker }])),
       headers: { get: () => null },
     } as unknown as Response);
 
@@ -419,25 +746,27 @@ describe('runCreateProtocol — integration', () => {
     const row = db.getRow(task.id, OCCURRENCE_DATE);
     expect(row?.state).toBe('active');
     expect(row?.skylight_id).toBe('sky-rescued');
+    // Clean title: no sentinel in expected_summary
+    expect(row?.expected_summary).toBe(cleanSummary);
+    expect(row?.expected_summary).not.toContain('▸');
   });
 
-  it('(c) DRYRUN issues zero mutating fetches', async () => {
+  it('(c) DRYRUN issues zero mutating fetches and zero D1 writes', async () => {
     const db = new InMemoryD1();
     const task = makeRawTask();
 
     const client = new SkylightClient({ frameId: FRAME_ID, dryrun: true, token: 'tok' });
 
-    await runCreateProtocol(client, db.asD1(), task, null, FRAME_ID, PROFILE, OCCURRENCE_DATE, null, 'America/New_York');
+    await runCreateProtocol(client, db.asD1(), task, null, FRAME_ID, PROFILE, OCCURRENCE_DATE, null, 'America/New_York', true);
 
     const mutatingCalls = (fetchSpy.mock.calls as [string, RequestInit | undefined][]).filter(
       ([, opts]) => opts?.method === 'POST' || opts?.method === 'PUT' || opts?.method === 'DELETE'
     );
     expect(mutatingCalls).toHaveLength(0);
 
-    // Row should exist in 'active' state with DRYRUN_SYNTHETIC_ID
-    const row = db.getRow(task.id, OCCURRENCE_DATE);
-    expect(row?.state).toBe('active');
-    expect(row?.skylight_id).toBe(DRYRUN_SYNTHETIC_ID);
+    // DRYRUN must not persist any mapping rows — D1 stays empty
+    expect(db.getRow(task.id, OCCURRENCE_DATE)).toBeUndefined();
+    expect(db.allRows()).toHaveLength(0);
   });
 });
 
@@ -464,7 +793,9 @@ describe('runInboundPass — integration', () => {
     db: InMemoryD1,
     overrides: Partial<MappingRow> = {}
   ): MappingRow {
-    const expected_summary = buildSummary(TASK_CONTENT, TASK_ID);
+    // Clean-title scheme: expected_summary is the task content (no sentinel).
+    // Ownership verification uses choreDescriptionMarker(TASK_ID), not summary.
+    const expected_summary = TASK_CONTENT;
     const row: MappingRow = {
       todoist_id: TASK_ID,
       fp_stable_id: null,
@@ -509,18 +840,18 @@ describe('runInboundPass — integration', () => {
     };
   }
 
-  it('(d) diverged on-device summary marks row detached, no write occurs', async () => {
+  it('(d) missing/markerless description on inbound chore marks row detached, no write occurs', async () => {
     const db = new InMemoryD1();
     const task = makeRawTask();
     const row = seedActiveRow(db);
 
-    // Skylight returns a chore with a DIFFERENT summary (sentinel stripped by family member)
-    const divergedSummary = 'Take out trash'; // sentinel stripped
+    // Skylight returns a chore via list with NO description marker (sentinel stripped)
+    const divergedSummary = 'Take out trash';
     fetchSpy.mockResolvedValue({
       ok: true,
       status: 200,
-      json: async () => makeChoreResponse('sky-001', divergedSummary),
-      text: async () => JSON.stringify(makeChoreResponse('sky-001', divergedSummary)),
+      json: async () => makeListResponse([{ id: 'sky-001', summary: divergedSummary, status: 'pending', description: undefined }]),
+      text: async () => JSON.stringify(makeListResponse([{ id: 'sky-001', summary: divergedSummary, status: 'pending', description: undefined }])),
       headers: { get: () => null },
     } as unknown as Response);
 
@@ -560,15 +891,24 @@ describe('runInboundPass — integration', () => {
   it('(f) Todoist-side completion pushes complete to Skylight even when chore is still pending', async () => {
     const db = new InMemoryD1();
     const row = seedActiveRow(db, { last_pushed_status: 'pending' });
-    const expectedSummary = row.expected_summary!;
+    // Clean-title scheme: description marker on chore confirms ownership.
+    const descMarker = choreDescriptionMarker(TASK_ID);
 
-    // GET chore → pending (device hasn't completed it yet)
+    // GET chore via list → pending (device hasn't completed it yet), description marker present
     fetchSpy
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
-        json: async () => makeChoreResponse('sky-001', expectedSummary, 'pending'),
-        text: async () => JSON.stringify(makeChoreResponse('sky-001', expectedSummary, 'pending')),
+        json: async () => makeListResponse([{ id: 'sky-001', summary: row.expected_summary!, status: 'pending', description: descMarker }]),
+        text: async () => JSON.stringify(makeListResponse([{ id: 'sky-001', summary: row.expected_summary!, status: 'pending', description: descMarker }])),
+        headers: { get: () => null },
+      } as unknown as Response)
+      // GET via list (runCompleteProtocol ownership re-GET)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => makeListResponse([{ id: 'sky-001', summary: row.expected_summary!, status: 'pending', description: descMarker }]),
+        text: async () => JSON.stringify(makeListResponse([{ id: 'sky-001', summary: row.expected_summary!, status: 'pending', description: descMarker }])),
         headers: { get: () => null },
       } as unknown as Response)
       // PUT complete (runCompleteProtocol)
@@ -578,12 +918,12 @@ describe('runInboundPass — integration', () => {
         text: async () => '{}',
         headers: { get: () => null },
       } as unknown as Response)
-      // GET (verifyCompleted)
+      // GET via list (verifyCompleted)
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
-        json: async () => makeChoreResponse('sky-001', expectedSummary, 'complete'),
-        text: async () => JSON.stringify(makeChoreResponse('sky-001', expectedSummary, 'complete')),
+        json: async () => makeListResponse([{ id: 'sky-001', summary: row.expected_summary!, status: 'complete', description: descMarker }]),
+        text: async () => JSON.stringify(makeListResponse([{ id: 'sky-001', summary: row.expected_summary!, status: 'complete', description: descMarker }])),
         headers: { get: () => null },
       } as unknown as Response);
 
@@ -606,16 +946,17 @@ describe('runInboundPass — integration', () => {
 
   it('(g) double-completion cross: updates last_pushed_status so a later device reopen is not swallowed', async () => {
     const db = new InMemoryD1();
-    seedActiveRow(db, { last_pushed_status: 'pending' });
-    const expectedSummary = buildSummary(TASK_CONTENT, TASK_ID);
+    const seededRow = seedActiveRow(db, { last_pushed_status: 'pending' });
+    // Clean-title scheme: description marker on chore confirms ownership.
+    const descMarker = choreDescriptionMarker(TASK_ID);
 
     // First inbound run: both sides complete → 'already in sync' branch
     // observed=complete, lastPushed=pending → not echo; observed===todoistStatus → update last_pushed
     fetchSpy.mockResolvedValue({
       ok: true,
       status: 200,
-      json: async () => makeChoreResponse('sky-001', expectedSummary, 'complete'),
-      text: async () => JSON.stringify(makeChoreResponse('sky-001', expectedSummary, 'complete')),
+      json: async () => makeListResponse([{ id: 'sky-001', summary: seededRow.expected_summary!, status: 'complete', description: descMarker }]),
+      text: async () => JSON.stringify(makeListResponse([{ id: 'sky-001', summary: seededRow.expected_summary!, status: 'complete', description: descMarker }])),
       headers: { get: () => null },
     } as unknown as Response);
 
@@ -635,13 +976,21 @@ describe('runInboundPass — integration', () => {
     // → REOPEN_TODOIST path (re-assert complete)
     fetchSpy.mockReset();
 
-    // GET chore → now pending (device reopened it)
+    // GET via list → now pending (device reopened it), description marker still present
     fetchSpy
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
-        json: async () => makeChoreResponse('sky-001', expectedSummary, 'pending'),
-        text: async () => JSON.stringify(makeChoreResponse('sky-001', expectedSummary, 'pending')),
+        json: async () => makeListResponse([{ id: 'sky-001', summary: seededRow.expected_summary!, status: 'pending', description: descMarker }]),
+        text: async () => JSON.stringify(makeListResponse([{ id: 'sky-001', summary: seededRow.expected_summary!, status: 'pending', description: descMarker }])),
+        headers: { get: () => null },
+      } as unknown as Response)
+      // GET via list (runCompleteProtocol ownership re-GET)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => makeListResponse([{ id: 'sky-001', summary: seededRow.expected_summary!, status: 'pending', description: descMarker }]),
+        text: async () => JSON.stringify(makeListResponse([{ id: 'sky-001', summary: seededRow.expected_summary!, status: 'pending', description: descMarker }])),
         headers: { get: () => null },
       } as unknown as Response)
       // PUT complete (re-assert)
@@ -651,12 +1000,12 @@ describe('runInboundPass — integration', () => {
         text: async () => '{}',
         headers: { get: () => null },
       } as unknown as Response)
-      // GET (verifyCompleted)
+      // GET via list (verifyCompleted)
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
-        json: async () => makeChoreResponse('sky-001', expectedSummary, 'complete'),
-        text: async () => JSON.stringify(makeChoreResponse('sky-001', expectedSummary, 'complete')),
+        json: async () => makeListResponse([{ id: 'sky-001', summary: seededRow.expected_summary!, status: 'complete', description: descMarker }]),
+        text: async () => JSON.stringify(makeListResponse([{ id: 'sky-001', summary: seededRow.expected_summary!, status: 'complete', description: descMarker }])),
         headers: { get: () => null },
       } as unknown as Response);
 
@@ -678,14 +1027,14 @@ describe('runInboundPass — integration', () => {
   it('(c) DRYRUN: no mutating fetches to Skylight during inbound pass (§7A complete path)', async () => {
     const db = new InMemoryD1();
     seedActiveRow(db, { last_pushed_status: 'pending' });
-    const expectedSummary = buildSummary(TASK_CONTENT, TASK_ID);
+    const descMarker = choreDescriptionMarker(TASK_ID);
 
-    // GET chore → pending
+    // GET chore via list → pending, with correct ownership marker
     fetchSpy.mockResolvedValue({
       ok: true,
       status: 200,
-      json: async () => makeChoreResponse('sky-001', expectedSummary, 'pending'),
-      text: async () => JSON.stringify(makeChoreResponse('sky-001', expectedSummary, 'pending')),
+      json: async () => makeListResponse([{ id: 'sky-001', summary: TASK_CONTENT, status: 'pending', description: descMarker }]),
+      text: async () => JSON.stringify(makeListResponse([{ id: 'sky-001', summary: TASK_CONTENT, status: 'pending', description: descMarker }])),
       headers: { get: () => null },
     } as unknown as Response);
 
@@ -704,23 +1053,23 @@ describe('runInboundPass — integration', () => {
     );
     expect(mutatingCalls).toHaveLength(0);
 
-    // last_pushed_status is still updated in D1 (DRYRUN only suppresses network writes)
+    // DRYRUN: D1 must NOT be mutated — last_pushed_status stays at original 'pending'
     const row = db.getRow(TASK_ID, OCCURRENCE_DATE);
-    expect(row?.last_pushed_status).toBe('complete');
+    expect(row?.last_pushed_status).toBe('pending');
   });
 
   it('(h) DRYRUN: zero mutating fetches to api.todoist.com when device completes a chore', async () => {
     const db = new InMemoryD1();
     // Row where device has completed the chore (observed=complete), Todoist is still pending
     seedActiveRow(db, { last_pushed_status: 'pending', observed_status: 'pending' });
-    const expectedSummary = buildSummary(TASK_CONTENT, TASK_ID);
+    const descMarker = choreDescriptionMarker(TASK_ID);
 
-    // GET chore → complete (device completed it)
+    // GET chore via list → complete (device completed it), ownership marker present
     fetchSpy.mockResolvedValue({
       ok: true,
       status: 200,
-      json: async () => makeChoreResponse('sky-001', expectedSummary, 'complete'),
-      text: async () => JSON.stringify(makeChoreResponse('sky-001', expectedSummary, 'complete')),
+      json: async () => makeListResponse([{ id: 'sky-001', summary: TASK_CONTENT, status: 'complete', description: descMarker }]),
+      text: async () => JSON.stringify(makeListResponse([{ id: 'sky-001', summary: TASK_CONTENT, status: 'complete', description: descMarker }])),
       headers: { get: () => null },
     } as unknown as Response);
 
@@ -740,22 +1089,22 @@ describe('runInboundPass — integration', () => {
     // DRYRUN must suppress closeTaskFn — zero calls to Todoist mutating endpoints
     expect(todositMutatingUrls).toHaveLength(0);
 
-    // D1 state should still be updated (DRYRUN only suppresses HTTP writes)
+    // DRYRUN: D1 must NOT be mutated — last_pushed_status stays at original 'pending'
     const row = db.getRow(TASK_ID, OCCURRENCE_DATE);
-    expect(row?.last_pushed_status).toBe('complete');
+    expect(row?.last_pushed_status).toBe('pending');
   });
 
   it('(f) echo guard: when observed matches last_pushed, no write issued', async () => {
     const db = new InMemoryD1();
     seedActiveRow(db, { last_pushed_status: 'pending' });
-    const expectedSummary = buildSummary(TASK_CONTENT, TASK_ID);
+    const descMarker = choreDescriptionMarker(TASK_ID);
 
-    // chore is pending — same as last_pushed → echo
+    // chore is pending — same as last_pushed → echo (ownership marker present)
     fetchSpy.mockResolvedValue({
       ok: true,
       status: 200,
-      json: async () => makeChoreResponse('sky-001', expectedSummary, 'pending'),
-      text: async () => JSON.stringify(makeChoreResponse('sky-001', expectedSummary, 'pending')),
+      json: async () => makeListResponse([{ id: 'sky-001', summary: TASK_CONTENT, status: 'pending', description: descMarker }]),
+      text: async () => JSON.stringify(makeListResponse([{ id: 'sky-001', summary: TASK_CONTENT, status: 'pending', description: descMarker }])),
       headers: { get: () => null },
     } as unknown as Response);
 
@@ -816,20 +1165,23 @@ describe('Phase 2b: recurring task → creates current occurrence (§5)', () => 
   it('(2b-1) recurring task with no mapping → creates non-recurring chore for current occurrence', async () => {
     const db = new InMemoryD1();
     const task = makeRecurringTodoistTask(RECURRING_TASK_ID, RECURRING_OCCURRENCE_DATE);
-    const expectedSummary = buildSummary(task.content, task.id);
+    // Clean-title scheme: summary is clean content; description carries the marker.
+    const cleanSummary = task.content;
+    const descMarker = choreDescriptionMarker(task.id);
 
-    // POST → create response; GET (read-back) → chore
+    // POST → create response with description marker echoed back
+    // GET via list (read-back) → chore with description marker
     fetchSpy
       .mockResolvedValueOnce({
         ok: true, status: 200,
-        json: async () => makeCreateResponse('sky-recur-001', expectedSummary),
-        text: async () => JSON.stringify(makeCreateResponse('sky-recur-001', expectedSummary)),
+        json: async () => makeCreateResponse('sky-recur-001', cleanSummary, descMarker),
+        text: async () => JSON.stringify(makeCreateResponse('sky-recur-001', cleanSummary, descMarker)),
         headers: { get: () => null },
       } as unknown as Response)
       .mockResolvedValueOnce({
         ok: true, status: 200,
-        json: async () => makeChoreResponse('sky-recur-001', expectedSummary),
-        text: async () => JSON.stringify(makeChoreResponse('sky-recur-001', expectedSummary)),
+        json: async () => makeListResponse([{ id: 'sky-recur-001', summary: cleanSummary, status: 'pending', description: descMarker }]),
+        text: async () => JSON.stringify(makeListResponse([{ id: 'sky-recur-001', summary: cleanSummary, status: 'pending', description: descMarker }])),
         headers: { get: () => null },
       } as unknown as Response);
 
@@ -847,6 +1199,9 @@ describe('Phase 2b: recurring task → creates current occurrence (§5)', () => 
     expect(row?.state).toBe('active');
     expect(row?.skylight_id).toBe('sky-recur-001');
     expect(row?.occurrence_date).toBe(RECURRING_OCCURRENCE_DATE);
+    // Clean title: no sentinel in expected_summary
+    expect(row?.expected_summary).toBe(cleanSummary);
+    expect(row?.expected_summary).not.toContain('▸');
 
     // Exactly one POST (one chore created, non-recurring)
     const postCalls = (fetchSpy.mock.calls as [string, RequestInit | undefined][]).filter(
@@ -856,6 +1211,9 @@ describe('Phase 2b: recurring task → creates current occurrence (§5)', () => 
     // Verify the created chore is non-recurring (recurring:false in create body)
     const createBody = JSON.parse((postCalls[0][1]?.body as string) ?? '{}') as Record<string, unknown>;
     expect(createBody['recurring']).toBe(false);
+    // Verify the create body contains description marker and clean summary
+    expect(createBody['description']).toBe(descMarker);
+    expect(String(createBody['summary'])).not.toContain('▸');
   });
 
   it('(2b-1-dryrun) DRYRUN: no mutating fetches for recurring task create', async () => {
@@ -867,7 +1225,7 @@ describe('Phase 2b: recurring task → creates current occurrence (§5)', () => 
     await runCreateProtocol(
       client, db.asD1(),
       { id: task.id, content: task.content, due: task.due, description: task.description, labels: task.labels },
-      null, FRAME_ID, PROFILE, RECURRING_OCCURRENCE_DATE, null, 'America/New_York'
+      null, FRAME_ID, PROFILE, RECURRING_OCCURRENCE_DATE, null, 'America/New_York', true
     );
 
     const mutatingCalls = (fetchSpy.mock.calls as [string, RequestInit | undefined][]).filter(
@@ -875,10 +1233,9 @@ describe('Phase 2b: recurring task → creates current occurrence (§5)', () => 
     );
     expect(mutatingCalls).toHaveLength(0);
 
-    // DRYRUN row is committed with synthetic id
-    const row = db.getRow(RECURRING_TASK_ID, RECURRING_OCCURRENCE_DATE);
-    expect(row?.state).toBe('active');
-    expect(row?.skylight_id).toBe(DRYRUN_SYNTHETIC_ID);
+    // DRYRUN must not persist any mapping rows — D1 stays empty
+    expect(db.getRow(RECURRING_TASK_ID, RECURRING_OCCURRENCE_DATE)).toBeUndefined();
+    expect(db.allRows()).toHaveLength(0);
   });
 });
 
@@ -898,7 +1255,8 @@ describe('Phase 2b: runRollProtocol — outbound due advance (§5)', () => {
   });
 
   function makeActiveRecurringRow(db: InMemoryD1, overrides: Partial<MappingRow> = {}): MappingRow {
-    const expected_summary = buildSummary('Take out trash', RECURRING_TASK_ID);
+    // Clean-title scheme: expected_summary is the task content (no sentinel).
+    const expected_summary = 'Take out trash';
     const row: MappingRow = {
       todoist_id: RECURRING_TASK_ID,
       fp_stable_id: null,
@@ -926,17 +1284,19 @@ describe('Phase 2b: runRollProtocol — outbound due advance (§5)', () => {
   it('(2b-3) Todoist due advanced → runRollProtocol deletes old chore, creates new occurrence', async () => {
     const db = new InMemoryD1();
     const oldRow = makeActiveRecurringRow(db);
-    const expectedSummary = buildSummary('Take out trash', RECURRING_TASK_ID);
+    // Clean-title scheme: description marker identifies ownership.
+    const cleanSummary = 'Take out trash';
+    const descMarker = choreDescriptionMarker(RECURRING_TASK_ID);
     const task = makeRecurringTodoistTask(RECURRING_TASK_ID, NEXT_OCCURRENCE_DATE);
 
-    // Sequence: GET (delete re-confirm), DELETE, GET (verify-deleted 404),
-    // POST (create new), GET (read-back new)
+    // Sequence: GET via list (delete re-confirm), DELETE,
+    // GET via list (verify-deleted, empty → gone), POST (create new), GET via list (read-back new)
     fetchSpy
-      // 1. re-GET old chore (delete protocol step 1)
+      // 1. re-GET via list (delete protocol step 1) — must include description marker
       .mockResolvedValueOnce({
         ok: true, status: 200,
-        json: async () => makeChoreResponse('sky-recur-001', expectedSummary),
-        text: async () => JSON.stringify(makeChoreResponse('sky-recur-001', expectedSummary)),
+        json: async () => makeListResponse([{ id: 'sky-recur-001', summary: cleanSummary, status: 'pending', description: descMarker }]),
+        text: async () => JSON.stringify(makeListResponse([{ id: 'sky-recur-001', summary: cleanSummary, status: 'pending', description: descMarker }])),
         headers: { get: () => null },
       } as unknown as Response)
       // 2. DELETE old chore
@@ -945,24 +1305,25 @@ describe('Phase 2b: runRollProtocol — outbound due advance (§5)', () => {
         text: async () => '',
         headers: { get: () => null },
       } as unknown as Response)
-      // 3. GET verify-deleted → 404
-      .mockResolvedValueOnce({
-        ok: false, status: 404,
-        text: async () => 'Not Found',
-        headers: { get: () => null },
-      } as unknown as Response)
-      // 4. POST create new occurrence
+      // 3. GET via list (verify-deleted) → empty list (chore gone)
       .mockResolvedValueOnce({
         ok: true, status: 200,
-        json: async () => makeCreateResponse('sky-recur-002', expectedSummary),
-        text: async () => JSON.stringify(makeCreateResponse('sky-recur-002', expectedSummary)),
+        json: async () => makeListResponse([]),
+        text: async () => JSON.stringify(makeListResponse([])),
         headers: { get: () => null },
       } as unknown as Response)
-      // 5. GET read-back new occurrence
+      // 4. POST create new occurrence — description marker echoed back
       .mockResolvedValueOnce({
         ok: true, status: 200,
-        json: async () => makeChoreResponse('sky-recur-002', expectedSummary),
-        text: async () => JSON.stringify(makeChoreResponse('sky-recur-002', expectedSummary)),
+        json: async () => makeCreateResponse('sky-recur-002', cleanSummary, descMarker),
+        text: async () => JSON.stringify(makeCreateResponse('sky-recur-002', cleanSummary, descMarker)),
+        headers: { get: () => null },
+      } as unknown as Response)
+      // 5. GET via list (read-back new occurrence) — description marker present
+      .mockResolvedValueOnce({
+        ok: true, status: 200,
+        json: async () => makeListResponse([{ id: 'sky-recur-002', summary: cleanSummary, status: 'pending', description: descMarker }]),
+        text: async () => JSON.stringify(makeListResponse([{ id: 'sky-recur-002', summary: cleanSummary, status: 'pending', description: descMarker }])),
         headers: { get: () => null },
       } as unknown as Response);
 
@@ -1007,11 +1368,12 @@ describe('Phase 2b: runRollProtocol — outbound due advance (§5)', () => {
     makeActiveRecurringRow(db); // keyed at RECURRING_OCCURRENCE_DATE
     const expectedSummary = buildSummary('Take out trash', RECURRING_TASK_ID);
 
-    // chore is pending (same as last_pushed — echo)
+    // chore is pending (same as last_pushed — echo), description marker present
+    const descMarkerRecur2 = choreDescriptionMarker(RECURRING_TASK_ID);
     fetchSpy.mockResolvedValue({
       ok: true, status: 200,
-      json: async () => makeChoreResponse('sky-recur-001', expectedSummary, 'pending'),
-      text: async () => JSON.stringify(makeChoreResponse('sky-recur-001', expectedSummary, 'pending')),
+      json: async () => makeListResponse([{ id: 'sky-recur-001', summary: 'Take out trash', status: 'pending', description: descMarkerRecur2 }]),
+      text: async () => JSON.stringify(makeListResponse([{ id: 'sky-recur-001', summary: 'Take out trash', status: 'pending', description: descMarkerRecur2 }])),
       headers: { get: () => null },
     } as unknown as Response);
 
@@ -1058,7 +1420,8 @@ describe('Phase 2b: inbound device-complete of recurring occurrence (§5)', () =
     db: InMemoryD1,
     overrides: Partial<MappingRow> = {}
   ): MappingRow {
-    const expected_summary = buildSummary('Take out trash', RECURRING_TASK_ID);
+    // Clean-title scheme: expected_summary is the task content (no sentinel).
+    const expected_summary = 'Take out trash';
     const row: MappingRow = {
       todoist_id: RECURRING_TASK_ID,
       fp_stable_id: null,
@@ -1086,13 +1449,13 @@ describe('Phase 2b: inbound device-complete of recurring occurrence (§5)', () =
   it('(2b-2) device completes recurring occurrence → closes Todoist (advance) AND rolls (DRYRUN gates both)', async () => {
     const db = new InMemoryD1();
     seedRecurringActiveRow(db);
-    const expectedSummary = buildSummary('Take out trash', RECURRING_TASK_ID);
+    const descMarkerRecur = choreDescriptionMarker(RECURRING_TASK_ID);
 
-    // GET chore → complete (device completed it)
+    // GET chore via list → complete (device completed it), ownership marker present
     fetchSpy.mockResolvedValue({
       ok: true, status: 200,
-      json: async () => makeChoreResponse('sky-recur-001', expectedSummary, 'complete'),
-      text: async () => JSON.stringify(makeChoreResponse('sky-recur-001', expectedSummary, 'complete')),
+      json: async () => makeListResponse([{ id: 'sky-recur-001', summary: 'Take out trash', status: 'complete', description: descMarkerRecur }]),
+      text: async () => JSON.stringify(makeListResponse([{ id: 'sky-recur-001', summary: 'Take out trash', status: 'complete', description: descMarkerRecur }])),
       headers: { get: () => null },
     } as unknown as Response);
 
@@ -1122,34 +1485,36 @@ describe('Phase 2b: inbound device-complete of recurring occurrence (§5)', () =
     );
     expect(mutatingCalls).toHaveLength(0);
 
-    // D1: last_pushed_status updated to 'complete'
+    // DRYRUN: D1 must NOT be mutated — last_pushed_status stays at original 'pending'
     const row = db.getRow(RECURRING_TASK_ID, RECURRING_OCCURRENCE_DATE);
-    expect(row?.last_pushed_status).toBe('complete');
+    expect(row?.last_pushed_status).toBe('pending');
   });
 
   it('(2b-2-live) device completes recurring occurrence → closes Todoist, deletes old, creates next occurrence', async () => {
     const db = new InMemoryD1();
     seedRecurringActiveRow(db);
-    const expectedSummary = buildSummary('Take out trash', RECURRING_TASK_ID);
+    // Clean-title scheme: description marker identifies ownership.
+    const cleanSummary = 'Take out trash';
+    const descMarker = choreDescriptionMarker(RECURRING_TASK_ID);
 
     // Sequence:
-    // 1. GET chore → complete (inbound sees device completed)
-    // 2. GET (delete re-confirm)
+    // 1. GET via list → complete (inbound sees device completed), description marker present
+    // 2. GET via list (delete re-confirm) — description marker present
     // 3. DELETE old chore
-    // 4. GET verify-deleted 404
-    // 5. POST create new occurrence
-    // 6. GET read-back new
+    // 4. GET via list (verify-deleted) → empty list (chore gone)
+    // 5. POST create new occurrence — description marker echoed back
+    // 6. GET via list (read-back new) — description marker present
     fetchSpy
       .mockResolvedValueOnce({
         ok: true, status: 200,
-        json: async () => makeChoreResponse('sky-recur-001', expectedSummary, 'complete'),
-        text: async () => JSON.stringify(makeChoreResponse('sky-recur-001', expectedSummary, 'complete')),
+        json: async () => makeListResponse([{ id: 'sky-recur-001', summary: cleanSummary, status: 'complete', description: descMarker }]),
+        text: async () => JSON.stringify(makeListResponse([{ id: 'sky-recur-001', summary: cleanSummary, status: 'complete', description: descMarker }])),
         headers: { get: () => null },
       } as unknown as Response)
       .mockResolvedValueOnce({
         ok: true, status: 200,
-        json: async () => makeChoreResponse('sky-recur-001', expectedSummary, 'complete'),
-        text: async () => JSON.stringify(makeChoreResponse('sky-recur-001', expectedSummary, 'complete')),
+        json: async () => makeListResponse([{ id: 'sky-recur-001', summary: cleanSummary, status: 'complete', description: descMarker }]),
+        text: async () => JSON.stringify(makeListResponse([{ id: 'sky-recur-001', summary: cleanSummary, status: 'complete', description: descMarker }])),
         headers: { get: () => null },
       } as unknown as Response)
       .mockResolvedValueOnce({
@@ -1158,20 +1523,21 @@ describe('Phase 2b: inbound device-complete of recurring occurrence (§5)', () =
         headers: { get: () => null },
       } as unknown as Response)
       .mockResolvedValueOnce({
-        ok: false, status: 404,
-        text: async () => 'Not Found',
+        ok: true, status: 200,
+        json: async () => makeListResponse([]),  // chore absent → verifyDeleted passes
+        text: async () => JSON.stringify(makeListResponse([])),
         headers: { get: () => null },
       } as unknown as Response)
       .mockResolvedValueOnce({
         ok: true, status: 200,
-        json: async () => makeCreateResponse('sky-recur-002', expectedSummary),
-        text: async () => JSON.stringify(makeCreateResponse('sky-recur-002', expectedSummary)),
+        json: async () => makeCreateResponse('sky-recur-002', cleanSummary, descMarker),
+        text: async () => JSON.stringify(makeCreateResponse('sky-recur-002', cleanSummary, descMarker)),
         headers: { get: () => null },
       } as unknown as Response)
       .mockResolvedValueOnce({
         ok: true, status: 200,
-        json: async () => makeChoreResponse('sky-recur-002', expectedSummary),
-        text: async () => JSON.stringify(makeChoreResponse('sky-recur-002', expectedSummary)),
+        json: async () => makeListResponse([{ id: 'sky-recur-002', summary: cleanSummary, status: 'pending', description: descMarker }]),
+        text: async () => JSON.stringify(makeListResponse([{ id: 'sky-recur-002', summary: cleanSummary, status: 'pending', description: descMarker }])),
         headers: { get: () => null },
       } as unknown as Response);
 
@@ -1243,11 +1609,12 @@ describe('Phase 2b: inbound device-complete of recurring occurrence (§5)', () =
     };
     db.rows.set(`${newRow.todoist_id}:${newRow.occurrence_date}`, newRow as unknown as D1Row);
 
-    // GET chore → pending (not completed)
+    // GET chore via list → pending (not completed), ownership marker present
+    const descMarkerRecur5 = choreDescriptionMarker(RECURRING_TASK_ID);
     fetchSpy.mockResolvedValue({
       ok: true, status: 200,
-      json: async () => makeChoreResponse('sky-recur-002', expectedSummary, 'pending'),
-      text: async () => JSON.stringify(makeChoreResponse('sky-recur-002', expectedSummary, 'pending')),
+      json: async () => makeListResponse([{ id: 'sky-recur-002', summary: 'Take out trash', status: 'pending', description: descMarkerRecur5 }]),
+      text: async () => JSON.stringify(makeListResponse([{ id: 'sky-recur-002', summary: 'Take out trash', status: 'pending', description: descMarkerRecur5 }])),
       headers: { get: () => null },
     } as unknown as Response);
 
@@ -1622,10 +1989,9 @@ describe('Phase 2c: runCreateListItemProtocol', () => {
     );
     expect(mutatingCalls).toHaveLength(0);
 
-    const row = db.getRow(task.id, '');
-    expect(row?.state).toBe('active');
-    expect(row?.skylight_id).toBe(DRYRUN_SYNTHETIC_LIST_ID);
-    expect(row?.surface).toBe('list');
+    // DRYRUN: D1 must NOT be mutated — no row should exist
+    expect(db.getRow(task.id, '')).toBeUndefined();
+    expect(db.allRows()).toHaveLength(0);
   });
 
   it('(2c-family-list-guard) refuses to write to a family list id', async () => {
@@ -1702,7 +2068,7 @@ describe('Phase 2c: runCompleteListItemProtocol', () => {
     expect(finalRow?.last_pushed_status).toBe('complete');
   });
 
-  it('(2c-2-dryrun) DRYRUN: zero mutations, last_pushed_status still updated', async () => {
+  it('(2c-2-dryrun) DRYRUN: zero mutations, last_pushed_status NOT updated', async () => {
     const db = new InMemoryD1();
     const row = seedListRow(db);
     const client = new SkylightClient({ frameId: FRAME_ID, dryrun: true, token: 'tok' });
@@ -1714,8 +2080,9 @@ describe('Phase 2c: runCompleteListItemProtocol', () => {
     );
     expect(mutatingCalls).toHaveLength(0);
 
+    // DRYRUN: D1 must NOT be mutated — last_pushed_status stays at original 'pending'
     const finalRow = db.getRow(LIST_TASK_ID, '');
-    expect(finalRow?.last_pushed_status).toBe('complete');
+    expect(finalRow?.last_pushed_status).toBe('pending');
   });
 });
 
@@ -1791,8 +2158,8 @@ describe('Phase 2c: runDeleteListItemProtocol', () => {
     );
     expect(deleteCalls).toHaveLength(0);
 
-    // D1 row should still be hard-deleted (DRYRUN only skips HTTP)
-    expect(db.getRow(LIST_TASK_ID, '')).toBeUndefined();
+    // DRYRUN: D1 must NOT be mutated — the row stays as-is (not deleted)
+    expect(db.getRow(LIST_TASK_ID, '')).toBeDefined();
   });
 });
 
@@ -1873,9 +2240,9 @@ describe('Phase 2c: runInboundListPoll', () => {
     // DRYRUN: no close to Todoist
     expect(closedTaskIds).toHaveLength(0);
 
-    // last_pushed_status still updated in D1
+    // DRYRUN: D1 must NOT be mutated — last_pushed_status stays at original 'pending'
     const row = db.getRow(LIST_TASK_ID, '');
-    expect(row?.last_pushed_status).toBe('complete');
+    expect(row?.last_pushed_status).toBe('pending');
   });
 
   it('(2c-4-echo) echo guard: already-pushed completed item is not re-closed', async () => {
@@ -1930,14 +2297,16 @@ describe('Phase 2c: runMigrateSurfaceProtocol (surface migration)', () => {
     const db = new InMemoryD1();
     const row = seedListRow(db);
     const label = buildListItemLabel(LIST_TASK_CONTENT, LIST_TASK_ID);
-    const choreSummary = buildSummary(LIST_TASK_CONTENT, LIST_TASK_ID);
+    // Clean-title scheme: chore summary is clean content; description carries the marker.
+    const cleanChoreSummary = LIST_TASK_CONTENT;
+    const descMarker = choreDescriptionMarker(LIST_TASK_ID);
 
     // Sequence:
     // 1. GET list before delete (item exists)
     // 2. DELETE item
     // 3. GET list after delete (item gone)
-    // 4. POST create chore
-    // 5. GET read-back chore
+    // 4. POST create chore — description marker echoed back
+    // 5. GET read-back chore — description marker present
     fetchSpy
       .mockResolvedValueOnce({
         ok: true, status: 200,
@@ -1958,14 +2327,15 @@ describe('Phase 2c: runMigrateSurfaceProtocol (surface migration)', () => {
       } as unknown as Response)
       .mockResolvedValueOnce({
         ok: true, status: 200,
-        json: async () => makeCreateResponse('sky-chore-001', choreSummary),
-        text: async () => JSON.stringify(makeCreateResponse('sky-chore-001', choreSummary)),
+        json: async () => makeCreateResponse('sky-chore-001', cleanChoreSummary, descMarker),
+        text: async () => JSON.stringify(makeCreateResponse('sky-chore-001', cleanChoreSummary, descMarker)),
         headers: { get: () => null },
       } as unknown as Response)
+      // 5. GET via list (read-back chore) — description marker present
       .mockResolvedValueOnce({
         ok: true, status: 200,
-        json: async () => makeChoreResponse('sky-chore-001', choreSummary),
-        text: async () => JSON.stringify(makeChoreResponse('sky-chore-001', choreSummary)),
+        json: async () => makeListResponse([{ id: 'sky-chore-001', summary: cleanChoreSummary, status: 'pending', description: descMarker }]),
+        text: async () => JSON.stringify(makeListResponse([{ id: 'sky-chore-001', summary: cleanChoreSummary, status: 'pending', description: descMarker }])),
         headers: { get: () => null },
       } as unknown as Response);
 
@@ -2001,8 +2371,9 @@ describe('Phase 2c: runMigrateSurfaceProtocol (surface migration)', () => {
 
   it('(2c-migrate-chore-to-list) task loses due date: deletes chore, creates list item (no dup/orphan)', async () => {
     const db = new InMemoryD1();
-    // Seed a chore row for the same task id
-    const choreSummary = buildSummary(LIST_TASK_CONTENT, LIST_TASK_ID);
+    // Seed a chore row for the same task id — clean-title scheme.
+    const cleanChoreSummary = LIST_TASK_CONTENT;
+    const descMarker = choreDescriptionMarker(LIST_TASK_ID);
     const choreRow: MappingRow = {
       todoist_id: LIST_TASK_ID,
       fp_stable_id: null,
@@ -2011,7 +2382,7 @@ describe('Phase 2c: runMigrateSurfaceProtocol (surface migration)', () => {
       frame_id: FRAME_ID,
       profile: PROFILE,
       skylight_id: 'sky-chore-001',
-      expected_summary: choreSummary,
+      expected_summary: cleanChoreSummary,
       last_pushed_status: 'pending',
       observed_status: 'pending',
       last_pushed_hash: LIST_TASK_ID,
@@ -2024,16 +2395,16 @@ describe('Phase 2c: runMigrateSurfaceProtocol (surface migration)', () => {
     const label = buildListItemLabel(LIST_TASK_CONTENT, LIST_TASK_ID);
 
     // Sequence:
-    // 1. GET chore (delete re-confirm)
+    // 1. GET via list (delete re-confirm) — description marker present confirms ownership
     // 2. DELETE chore
-    // 3. GET chore verify-deleted 404
+    // 3. GET via list (verify-deleted) → empty list (chore gone)
     // 4. POST create list item
     // 5. GET list (read-back)
     fetchSpy
       .mockResolvedValueOnce({
         ok: true, status: 200,
-        json: async () => makeChoreResponse('sky-chore-001', choreSummary),
-        text: async () => JSON.stringify(makeChoreResponse('sky-chore-001', choreSummary)),
+        json: async () => makeListResponse([{ id: 'sky-chore-001', summary: cleanChoreSummary, status: 'pending', description: descMarker }]),
+        text: async () => JSON.stringify(makeListResponse([{ id: 'sky-chore-001', summary: cleanChoreSummary, status: 'pending', description: descMarker }])),
         headers: { get: () => null },
       } as unknown as Response)
       .mockResolvedValueOnce({
@@ -2042,8 +2413,9 @@ describe('Phase 2c: runMigrateSurfaceProtocol (surface migration)', () => {
         headers: { get: () => null },
       } as unknown as Response)
       .mockResolvedValueOnce({
-        ok: false, status: 404,
-        text: async () => 'Not Found',
+        ok: true, status: 200,
+        json: async () => makeListResponse([]),  // chore absent → verifyDeleted passes
+        text: async () => JSON.stringify(makeListResponse([])),
         headers: { get: () => null },
       } as unknown as Response)
       .mockResolvedValueOnce({
