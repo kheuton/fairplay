@@ -644,6 +644,60 @@ export class SkylightClient {
     return list.find((c) => c.id === choreId) ?? null;
   }
 
+  /**
+   * Fetch multiple chores by id in ONE windowed list query.
+   *
+   * Takes an array of {id, date} descriptors and computes a window that spans
+   * [min(date)-1day, max(date)+1day] so every chore is guaranteed to appear.
+   * Returns a Map of skylightId → ChoreResource for all chores found in the window.
+   * Chores not present in the response are absent from the Map (callers treat
+   * them as genuinely deleted / needs_review).
+   *
+   * This replaces N separate getChoreById calls (one per chore) with a SINGLE
+   * list GET, dramatically reducing subrequest count on Cloudflare Workers.
+   *
+   * Safety: uses the same params as getChoreById (include_late, include_up_for_grabs,
+   * filter=linked_to_profile) so profile-assigned chores are never missed.
+   *
+   * @param chores - Array of {id, date} for the chores to look up.
+   * @returns Map of skylight_id → ChoreResource for found chores.
+   */
+  async batchFetchChoresByIds(
+    chores: Array<{ id: string; date: string }>
+  ): Promise<Map<string, ChoreResource>> {
+    if (chores.length === 0) return new Map();
+
+    // Compute min and max dates across all chores
+    const dates = chores.map((c) => c.date).filter(Boolean);
+    if (dates.length === 0) return new Map();
+
+    const minDate = dates.reduce((a, b) => (a < b ? a : b));
+    const maxDate = dates.reduce((a, b) => (a > b ? a : b));
+
+    const after = isoDateOffset(minDate, -1);
+    const before = isoDateOffset(maxDate, 1);
+
+    const qs = new URLSearchParams({
+      after,
+      before,
+      include_late: 'true',
+      include_up_for_grabs: 'true',
+      filter: 'linked_to_profile',
+    });
+    const resp = await this.apiGet<ChoreListResponse>(
+      `/api/frames/${this.frameId}/chores?${qs}`
+    );
+    const list = resp.data ?? [];
+
+    // Build a lookup map: id → ChoreResource
+    const byId = new Map<string, ChoreResource>();
+    for (const chore of list) {
+      byId.set(chore.id, chore);
+    }
+
+    return byId;
+  }
+
   // ── Chores — writes (gated by DRYRUN) ─────────────────────────────────────
 
   /**

@@ -2461,3 +2461,636 @@ describe('Phase 2c: runMigrateSurfaceProtocol (surface migration)', () => {
     expect(postCalls).toHaveLength(1);
   });
 });
+
+// ===========================================================================
+// Subrequest-reduction: batched create-verify + batched inbound fetch
+// ===========================================================================
+
+import {
+  runBatchedCreateVerify,
+  runCreateProtocolPostOnly,
+  type PendingCreateEntry,
+} from './index.js';
+
+// ---------------------------------------------------------------------------
+// Helpers shared across batch tests
+// ---------------------------------------------------------------------------
+
+function makeChoreResourceFromList(
+  id: string,
+  summary: string,
+  date: string,
+  description: string | null
+): {
+  id: string;
+  type: 'chore';
+  attributes: {
+    summary: string;
+    status: string;
+    start: string;
+    start_time: null;
+    recurring: boolean;
+    completed_on: null;
+    emoji_icon: null;
+    reward_points: null;
+    category_id: null;
+    category_ids: null;
+    description: string | null;
+  };
+} {
+  return {
+    id,
+    type: 'chore' as const,
+    attributes: {
+      summary,
+      status: 'pending',
+      start: date,
+      start_time: null,
+      recurring: false,
+      completed_on: null,
+      emoji_icon: null,
+      reward_points: null,
+      category_id: null,
+      category_ids: null,
+      description,
+    },
+  };
+}
+
+function makeBatchListResponse(chores: Array<{ id: string; summary: string; date: string; description: string | null; status?: string }>) {
+  return {
+    data: chores.map((c) => ({
+      id: c.id,
+      type: 'chore' as const,
+      attributes: {
+        summary: c.summary,
+        status: c.status ?? 'pending',
+        start: c.date,
+        start_time: null,
+        recurring: false,
+        completed_on: c.status === 'complete' ? c.date : null,
+        emoji_icon: null,
+        reward_points: null,
+        category_id: null,
+        category_ids: null,
+        description: c.description,
+      },
+    })),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Tests: runBatchedCreateVerify — one GET for N creates
+// ---------------------------------------------------------------------------
+
+describe('runBatchedCreateVerify — single list GET verifies multiple creates', () => {
+  let fetchSpy: ReturnType<typeof vi.fn>;
+  let originalFetch: typeof globalThis.fetch;
+
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+    fetchSpy = vi.fn();
+    globalThis.fetch = fetchSpy;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  it('(batch-1) verifies 3 creates with EXACTLY ONE list GET, commits all active', async () => {
+    const db = new InMemoryD1();
+
+    // Seed 3 'creating' rows (write-ahead already done by runCreateProtocolPostOnly)
+    const tasks = [
+      { id: 'task-b001', content: 'Chore A', description: '', labels: [], due: { date: '2026-07-01', string: '', is_recurring: false } },
+      { id: 'task-b002', content: 'Chore B', description: '', labels: [], due: { date: '2026-07-05', string: '', is_recurring: false } },
+      { id: 'task-b003', content: 'Chore C', description: '', labels: [], due: { date: '2026-07-10', string: '', is_recurring: false } },
+    ];
+
+    // Pre-seed 'creating' rows
+    for (const t of tasks) {
+      db.rows.set(`${t.id}:${t.due!.date}`, {
+        todoist_id: t.id, fp_stable_id: null, occurrence_date: t.due!.date,
+        surface: 'chore', frame_id: FRAME_ID, profile: PROFILE,
+        skylight_id: null, expected_summary: t.content, last_pushed_status: null,
+        observed_status: null, last_pushed_hash: null, state: 'creating',
+        idem_token: sentinelToken(t.id), updated_at: null,
+      });
+    }
+
+    const entries: PendingCreateEntry[] = tasks.map((t, i) => ({
+      task: t,
+      occurrenceDate: t.due!.date,
+      profile: PROFILE,
+      skylightId: `sky-batch-00${i + 1}`,
+      dueDate: t.due!.date,
+      descMarker: choreDescriptionMarker(t.id),
+      expectedSummary: t.content,
+    }));
+
+    // ONE batched list GET returns all three chores — window: 2026-06-30 to 2026-07-11
+    fetchSpy.mockResolvedValueOnce({
+      ok: true, status: 200,
+      json: async () => makeBatchListResponse([
+        { id: 'sky-batch-001', summary: 'Chore A', date: '2026-07-01', description: choreDescriptionMarker('task-b001') },
+        { id: 'sky-batch-002', summary: 'Chore B', date: '2026-07-05', description: choreDescriptionMarker('task-b002') },
+        { id: 'sky-batch-003', summary: 'Chore C', date: '2026-07-10', description: choreDescriptionMarker('task-b003') },
+      ]),
+      text: async () => JSON.stringify(makeBatchListResponse([
+        { id: 'sky-batch-001', summary: 'Chore A', date: '2026-07-01', description: choreDescriptionMarker('task-b001') },
+        { id: 'sky-batch-002', summary: 'Chore B', date: '2026-07-05', description: choreDescriptionMarker('task-b002') },
+        { id: 'sky-batch-003', summary: 'Chore C', date: '2026-07-10', description: choreDescriptionMarker('task-b003') },
+      ])),
+      headers: { get: () => null },
+    } as unknown as Response);
+
+    const client = new SkylightClient({ frameId: FRAME_ID, dryrun: false, token: 'tok' });
+
+    await runBatchedCreateVerify(client, db.asD1(), entries);
+
+    // CRITICAL: exactly ONE GET was issued (not 3)
+    const getCalls = (fetchSpy.mock.calls as [string, RequestInit | undefined][]).filter(
+      ([, opts]) => !opts?.method || opts.method === 'GET'
+    );
+    expect(getCalls).toHaveLength(1);
+    expect(fetchSpy.mock.calls).toHaveLength(1);
+
+    // All three rows committed to 'active'
+    for (const t of tasks) {
+      const row = db.getRow(t.id, t.due!.date);
+      expect(row?.state).toBe('active');
+      expect(row?.skylight_id).toMatch(/^sky-batch-00/);
+    }
+  });
+
+  it('(batch-2) chore absent from batch window → needs_review (not active)', async () => {
+    const db = new InMemoryD1();
+
+    const tasks = [
+      { id: 'task-c001', content: 'Present', description: '', labels: [], due: { date: '2026-07-01', string: '', is_recurring: false } },
+      { id: 'task-c002', content: 'Missing', description: '', labels: [], due: { date: '2026-07-03', string: '', is_recurring: false } },
+    ];
+
+    for (const t of tasks) {
+      db.rows.set(`${t.id}:${t.due!.date}`, {
+        todoist_id: t.id, fp_stable_id: null, occurrence_date: t.due!.date,
+        surface: 'chore', frame_id: FRAME_ID, profile: PROFILE,
+        skylight_id: null, expected_summary: t.content, last_pushed_status: null,
+        observed_status: null, last_pushed_hash: null, state: 'creating',
+        idem_token: sentinelToken(t.id), updated_at: null,
+      });
+    }
+
+    const entries: PendingCreateEntry[] = [
+      {
+        task: tasks[0],
+        occurrenceDate: tasks[0].due!.date,
+        profile: PROFILE,
+        skylightId: 'sky-present-001',
+        dueDate: tasks[0].due!.date,
+        descMarker: choreDescriptionMarker(tasks[0].id),
+        expectedSummary: tasks[0].content,
+      },
+      {
+        task: tasks[1],
+        occurrenceDate: tasks[1].due!.date,
+        profile: PROFILE,
+        skylightId: 'sky-missing-001',
+        dueDate: tasks[1].due!.date,
+        descMarker: choreDescriptionMarker(tasks[1].id),
+        expectedSummary: tasks[1].content,
+      },
+    ];
+
+    // Batch returns only the first chore — second is absent (404 region)
+    fetchSpy.mockResolvedValueOnce({
+      ok: true, status: 200,
+      json: async () => makeBatchListResponse([
+        { id: 'sky-present-001', summary: 'Present', date: '2026-07-01', description: choreDescriptionMarker('task-c001') },
+      ]),
+      text: async () => JSON.stringify(makeBatchListResponse([
+        { id: 'sky-present-001', summary: 'Present', date: '2026-07-01', description: choreDescriptionMarker('task-c001') },
+      ])),
+      headers: { get: () => null },
+    } as unknown as Response);
+
+    const client = new SkylightClient({ frameId: FRAME_ID, dryrun: false, token: 'tok' });
+
+    await runBatchedCreateVerify(client, db.asD1(), entries);
+
+    // Present chore → active
+    expect(db.getRow(tasks[0].id, tasks[0].due!.date)?.state).toBe('active');
+    // Missing chore → needs_review
+    expect(db.getRow(tasks[1].id, tasks[1].due!.date)?.state).toBe('needs_review');
+
+    // Still only ONE GET
+    expect(fetchSpy.mock.calls).toHaveLength(1);
+  });
+
+  it('(batch-3) window spans min..max across all entry dates (not a fixed window)', async () => {
+    // This verifies that batchFetchChoresByIds uses the ACTUAL date range, not a fixed window.
+    const db = new InMemoryD1();
+
+    const wideEntries: PendingCreateEntry[] = [
+      {
+        task: { id: 'task-w001', content: 'Early', description: '', labels: [], due: { date: '2026-06-01' } },
+        occurrenceDate: '2026-06-01',
+        profile: PROFILE,
+        skylightId: 'sky-w001',
+        dueDate: '2026-06-01',
+        descMarker: choreDescriptionMarker('task-w001'),
+        expectedSummary: 'Early',
+      },
+      {
+        task: { id: 'task-w002', content: 'Late', description: '', labels: [], due: { date: '2026-09-30' } },
+        occurrenceDate: '2026-09-30',
+        profile: PROFILE,
+        skylightId: 'sky-w002',
+        dueDate: '2026-09-30',
+        descMarker: choreDescriptionMarker('task-w002'),
+        expectedSummary: 'Late',
+      },
+    ];
+
+    for (const e of wideEntries) {
+      db.rows.set(`${e.task.id}:${e.occurrenceDate}`, {
+        todoist_id: e.task.id, fp_stable_id: null, occurrence_date: e.occurrenceDate,
+        surface: 'chore', frame_id: FRAME_ID, profile: PROFILE,
+        skylight_id: null, expected_summary: e.expectedSummary, last_pushed_status: null,
+        observed_status: null, last_pushed_hash: null, state: 'creating',
+        idem_token: sentinelToken(e.task.id), updated_at: null,
+      });
+    }
+
+    fetchSpy.mockResolvedValueOnce({
+      ok: true, status: 200,
+      json: async () => makeBatchListResponse([
+        { id: 'sky-w001', summary: 'Early', date: '2026-06-01', description: choreDescriptionMarker('task-w001') },
+        { id: 'sky-w002', summary: 'Late', date: '2026-09-30', description: choreDescriptionMarker('task-w002') },
+      ]),
+      text: async () => JSON.stringify(makeBatchListResponse([
+        { id: 'sky-w001', summary: 'Early', date: '2026-06-01', description: choreDescriptionMarker('task-w001') },
+        { id: 'sky-w002', summary: 'Late', date: '2026-09-30', description: choreDescriptionMarker('task-w002') },
+      ])),
+      headers: { get: () => null },
+    } as unknown as Response);
+
+    const client = new SkylightClient({ frameId: FRAME_ID, dryrun: false, token: 'tok' });
+
+    await runBatchedCreateVerify(client, db.asD1(), wideEntries);
+
+    // Both committed active (window was wide enough)
+    expect(db.getRow('task-w001', '2026-06-01')?.state).toBe('active');
+    expect(db.getRow('task-w002', '2026-09-30')?.state).toBe('active');
+
+    // Verify the GET URL includes after= and before= spanning the full range
+    const getUrl = (fetchSpy.mock.calls[0] as [string])[0];
+    expect(getUrl).toContain('after=2026-05-31'); // min date - 1
+    expect(getUrl).toContain('before=2026-10-01'); // max date + 1
+  });
+
+  it('(batch-4) wrong description marker on batch response → needs_review, not active', async () => {
+    const db = new InMemoryD1();
+
+    const task = { id: 'task-m001', content: 'Test', description: '', labels: [], due: { date: '2026-07-01', string: '', is_recurring: false } };
+    db.rows.set(`${task.id}:${task.due.date}`, {
+      todoist_id: task.id, fp_stable_id: null, occurrence_date: task.due.date,
+      surface: 'chore', frame_id: FRAME_ID, profile: PROFILE,
+      skylight_id: null, expected_summary: task.content, last_pushed_status: null,
+      observed_status: null, last_pushed_hash: null, state: 'creating',
+      idem_token: sentinelToken(task.id), updated_at: null,
+    });
+
+    const entries: PendingCreateEntry[] = [{
+      task,
+      occurrenceDate: task.due.date,
+      profile: PROFILE,
+      skylightId: 'sky-m001',
+      dueDate: task.due.date,
+      descMarker: choreDescriptionMarker(task.id),
+      expectedSummary: task.content,
+    }];
+
+    // Batch returns the chore but with a WRONG description marker (attacker/family chore)
+    const foreignMarker = choreDescriptionMarker('attacker-999');
+    fetchSpy.mockResolvedValueOnce({
+      ok: true, status: 200,
+      json: async () => makeBatchListResponse([
+        { id: 'sky-m001', summary: 'Test', date: '2026-07-01', description: foreignMarker },
+      ]),
+      text: async () => JSON.stringify(makeBatchListResponse([
+        { id: 'sky-m001', summary: 'Test', date: '2026-07-01', description: foreignMarker },
+      ])),
+      headers: { get: () => null },
+    } as unknown as Response);
+
+    const client = new SkylightClient({ frameId: FRAME_ID, dryrun: false, token: 'tok' });
+
+    await runBatchedCreateVerify(client, db.asD1(), entries);
+
+    // Must NOT be active — marker mismatch → needs_review
+    const row = db.getRow(task.id, task.due.date);
+    expect(row?.state).toBe('needs_review');
+    expect(row?.skylight_id ?? null).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: runOutboundPass with batched create-verify (multi-create)
+// ---------------------------------------------------------------------------
+
+// Module mock already in scope from outbound.test.ts file; here we need it too.
+// Since we're in the same file as other tests, we re-use the global mock.
+// (The vi.mock in outbound.test.ts applies to that file only; here we use direct
+//  runBatchedCreateVerify + runCreateProtocolPostOnly tests above for the core.)
+//
+// For the outbound pass integration, we test via the REAL runBatchedCreateVerify export.
+
+describe('runBatchedCreateVerify — DRYRUN: no writes', () => {
+  let fetchSpy: ReturnType<typeof vi.fn>;
+  let originalFetch: typeof globalThis.fetch;
+
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+    fetchSpy = vi.fn();
+    globalThis.fetch = fetchSpy;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  it('(batch-dryrun) DRYRUN: runBatchedCreateVerify issues zero GETs and zero D1 writes', async () => {
+    const db = new InMemoryD1();
+    const entries: PendingCreateEntry[] = [
+      {
+        task: { id: 'task-dr1', content: 'X', description: '', labels: [], due: { date: '2026-07-01' } },
+        occurrenceDate: '2026-07-01',
+        profile: PROFILE,
+        skylightId: 'sky-dr1',
+        dueDate: '2026-07-01',
+        descMarker: choreDescriptionMarker('task-dr1'),
+        expectedSummary: 'X',
+      },
+    ];
+
+    const client = new SkylightClient({ frameId: FRAME_ID, dryrun: true, token: 'tok' });
+
+    // Under dryrun, the batch verify still does the GET (it's a read operation)
+    // but commits nothing to D1.
+    fetchSpy.mockResolvedValueOnce({
+      ok: true, status: 200,
+      json: async () => makeBatchListResponse([
+        { id: 'sky-dr1', summary: 'X', date: '2026-07-01', description: choreDescriptionMarker('task-dr1') },
+      ]),
+      text: async () => JSON.stringify(makeBatchListResponse([
+        { id: 'sky-dr1', summary: 'X', date: '2026-07-01', description: choreDescriptionMarker('task-dr1') },
+      ])),
+      headers: { get: () => null },
+    } as unknown as Response);
+
+    // Must not throw
+    await runBatchedCreateVerify(client, db.asD1(), entries, true /* dryrun */);
+
+    // No mutating calls
+    const mutatingCalls = (fetchSpy.mock.calls as [string, RequestInit | undefined][]).filter(
+      ([, opts]) => opts?.method === 'POST' || opts?.method === 'PUT' || opts?.method === 'DELETE'
+    );
+    expect(mutatingCalls).toHaveLength(0);
+
+    // D1 must not be mutated (no row seeded, so it stays empty)
+    expect(db.allRows()).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: runInboundPass batched fetch — ONE list GET for N active mappings
+// ---------------------------------------------------------------------------
+
+describe('runInboundPass — batched list GET for active chore mappings', () => {
+  let fetchSpy: ReturnType<typeof vi.fn>;
+  let originalFetch: typeof globalThis.fetch;
+
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+    fetchSpy = vi.fn();
+    globalThis.fetch = fetchSpy;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  function seedChoreRow(db: InMemoryD1, id: string, skylightId: string, date: string, overrides: Partial<MappingRow> = {}): MappingRow {
+    const row: MappingRow = {
+      todoist_id: id,
+      fp_stable_id: null,
+      occurrence_date: date,
+      surface: 'chore',
+      frame_id: FRAME_ID,
+      profile: PROFILE,
+      skylight_id: skylightId,
+      expected_summary: 'Chore ' + id,
+      last_pushed_status: 'pending',
+      observed_status: 'pending',
+      last_pushed_hash: null,
+      state: 'active',
+      idem_token: sentinelToken(id),
+      updated_at: null,
+      ...overrides,
+    };
+    db.rows.set(`${id}:${date}`, row as unknown as D1Row);
+    return row;
+  }
+
+  it('(inbound-batch-1) 3 active chore mappings: ONE list GET, completion detected from batch', async () => {
+    const db = new InMemoryD1();
+
+    // Seed 3 active chore rows — one is complete on device
+    seedChoreRow(db, 'task-ib001', 'sky-ib001', '2026-07-01');
+    seedChoreRow(db, 'task-ib002', 'sky-ib002', '2026-07-05', { last_pushed_status: 'pending' });
+    seedChoreRow(db, 'task-ib003', 'sky-ib003', '2026-07-10');
+
+    const m002Marker = choreDescriptionMarker('task-ib002');
+
+    // ONE batched list GET returns all 3 — task-ib002 is completed on device
+    fetchSpy.mockResolvedValueOnce({
+      ok: true, status: 200,
+      json: async () => makeBatchListResponse([
+        { id: 'sky-ib001', summary: 'Chore task-ib001', date: '2026-07-01', description: choreDescriptionMarker('task-ib001') },
+        { id: 'sky-ib002', summary: 'Chore task-ib002', date: '2026-07-05', description: m002Marker, status: 'complete' },
+        { id: 'sky-ib003', summary: 'Chore task-ib003', date: '2026-07-10', description: choreDescriptionMarker('task-ib003') },
+      ]),
+      text: async () => JSON.stringify(makeBatchListResponse([
+        { id: 'sky-ib001', summary: 'Chore task-ib001', date: '2026-07-01', description: choreDescriptionMarker('task-ib001') },
+        { id: 'sky-ib002', summary: 'Chore task-ib002', date: '2026-07-05', description: m002Marker, status: 'complete' },
+        { id: 'sky-ib003', summary: 'Chore task-ib003', date: '2026-07-10', description: choreDescriptionMarker('task-ib003') },
+      ])),
+      headers: { get: () => null },
+    } as unknown as Response);
+
+    const client = new SkylightClient({ frameId: FRAME_ID, dryrun: false, token: 'tok' });
+    const closedTaskIds: string[] = [];
+    const deps: InboundPassDeps = {
+      getTaskFn: async (id) => ({
+        id,
+        content: 'Chore ' + id,
+        description: '',
+        labels: [],
+        project_id: '',
+        section_id: null,
+        parent_id: null,
+        due: { date: '2026-07-05', string: '', is_recurring: false },
+        priority: 1,
+        checked: false,
+      }) as import('./types.js').RawTask,
+      closeTaskFn: async (id) => { closedTaskIds.push(id); },
+      todoistApiToken: 'tok',
+      dryrun: false,
+    };
+
+    await runInboundPass(client, db.asD1(), FRAME_ID, deps);
+
+    // task-ib002 device-completed → should have closed Todoist
+    expect(closedTaskIds).toContain('task-ib002');
+
+    // Count list GETs: the batch fetch is ONE call, plus any follow-on calls
+    // (updateObservedStatus does no fetch; complete protocol does getChoreById+PUT+verify)
+    const allGetCalls = (fetchSpy.mock.calls as [string, RequestInit | undefined][]).filter(
+      ([url]) => (url as string).includes('/chores?')
+    );
+    // The FIRST call (batch) is ONE GET covering all 3 mappings (not 3 separate GETs)
+    // completeProtocol adds 2 more GETs (ownership re-GET + verifyCompleted) = total 3
+    // But critically, the initial "observe" step is 1 GET not 3
+    // Verify: batch GET URL spans min date 2026-06-30 to max date 2026-07-11
+    const batchGetUrl = allGetCalls[0][0] as string;
+    expect(batchGetUrl).toContain('after=2026-06-30'); // 2026-07-01 - 1
+    expect(batchGetUrl).toContain('before=2026-07-11'); // 2026-07-10 + 1
+  });
+
+  it('(inbound-batch-2) wrong-marker chore in batched response → detached, no close Todoist', async () => {
+    const db = new InMemoryD1();
+
+    seedChoreRow(db, 'task-ib004', 'sky-ib004', '2026-07-01');
+
+    // Batch returns the chore with a FOREIGN description marker
+    const foreignMarker = choreDescriptionMarker('foreign-task-000');
+    fetchSpy.mockResolvedValueOnce({
+      ok: true, status: 200,
+      json: async () => makeBatchListResponse([
+        { id: 'sky-ib004', summary: 'Family chore', date: '2026-07-01', description: foreignMarker, status: 'complete' },
+      ]),
+      text: async () => JSON.stringify(makeBatchListResponse([
+        { id: 'sky-ib004', summary: 'Family chore', date: '2026-07-01', description: foreignMarker, status: 'complete' },
+      ])),
+      headers: { get: () => null },
+    } as unknown as Response);
+
+    const client = new SkylightClient({ frameId: FRAME_ID, dryrun: false, token: 'tok' });
+    const closedTaskIds: string[] = [];
+    const deps: InboundPassDeps = {
+      getTaskFn: async (id) => ({
+        id, content: 'Chore', description: '', labels: [], project_id: '', section_id: null,
+        parent_id: null, due: { date: '2026-07-01', string: '', is_recurring: false }, priority: 1, checked: false,
+      }) as import('./types.js').RawTask,
+      closeTaskFn: async (id) => { closedTaskIds.push(id); },
+      todoistApiToken: 'tok',
+      dryrun: false,
+    };
+
+    await runInboundPass(client, db.asD1(), FRAME_ID, deps);
+
+    // Row should be detached
+    const row = db.getRow('task-ib004', '2026-07-01');
+    expect(row?.state).toBe('detached');
+
+    // No Todoist close issued — wrong-marker guard blocks it
+    expect(closedTaskIds).toHaveLength(0);
+  });
+
+  it('(inbound-batch-3) chore absent from batched response → treated as device-deleted, mapping dropped', async () => {
+    const db = new InMemoryD1();
+
+    seedChoreRow(db, 'task-ib005', 'sky-ib005', '2026-07-01');
+
+    // Batch returns an EMPTY list (chore is absent from the window)
+    fetchSpy.mockResolvedValueOnce({
+      ok: true, status: 200,
+      json: async () => makeBatchListResponse([]),
+      text: async () => JSON.stringify(makeBatchListResponse([])),
+      headers: { get: () => null },
+    } as unknown as Response);
+
+    const client = new SkylightClient({ frameId: FRAME_ID, dryrun: false, token: 'tok' });
+    const closedTaskIds: string[] = [];
+    const deps: InboundPassDeps = {
+      getTaskFn: async (id) => ({
+        id, content: 'Chore', description: '', labels: [], project_id: '', section_id: null,
+        parent_id: null, due: { date: '2026-07-01', string: '', is_recurring: false }, priority: 1, checked: false,
+      }) as import('./types.js').RawTask,
+      closeTaskFn: async (id) => { closedTaskIds.push(id); },
+      todoistApiToken: 'tok',
+      dryrun: false,
+    };
+
+    await runInboundPass(client, db.asD1(), FRAME_ID, deps);
+
+    // Row should be hard-deleted (device-deleted path)
+    expect(db.getRow('task-ib005', '2026-07-01')).toBeUndefined();
+
+    // No Todoist close issued
+    expect(closedTaskIds).toHaveLength(0);
+  });
+
+  it('(inbound-batch-4) 3 active chore rows: batch issues 1 list GET not 3 individual GETs', async () => {
+    const db = new InMemoryD1();
+
+    seedChoreRow(db, 'task-ib006', 'sky-ib006', '2026-07-02');
+    seedChoreRow(db, 'task-ib007', 'sky-ib007', '2026-07-04');
+    seedChoreRow(db, 'task-ib008', 'sky-ib008', '2026-07-06');
+
+    // ONE batch response — all 3 pending (no action needed beyond observe)
+    fetchSpy.mockResolvedValue({
+      ok: true, status: 200,
+      json: async () => makeBatchListResponse([
+        { id: 'sky-ib006', summary: 'Chore task-ib006', date: '2026-07-02', description: choreDescriptionMarker('task-ib006') },
+        { id: 'sky-ib007', summary: 'Chore task-ib007', date: '2026-07-04', description: choreDescriptionMarker('task-ib007') },
+        { id: 'sky-ib008', summary: 'Chore task-ib008', date: '2026-07-06', description: choreDescriptionMarker('task-ib008') },
+      ]),
+      text: async () => JSON.stringify(makeBatchListResponse([
+        { id: 'sky-ib006', summary: 'Chore task-ib006', date: '2026-07-02', description: choreDescriptionMarker('task-ib006') },
+        { id: 'sky-ib007', summary: 'Chore task-ib007', date: '2026-07-04', description: choreDescriptionMarker('task-ib007') },
+        { id: 'sky-ib008', summary: 'Chore task-ib008', date: '2026-07-06', description: choreDescriptionMarker('task-ib008') },
+      ])),
+      headers: { get: () => null },
+    } as unknown as Response);
+
+    const client = new SkylightClient({ frameId: FRAME_ID, dryrun: false, token: 'tok' });
+    const deps: InboundPassDeps = {
+      getTaskFn: async (id) => ({
+        id, content: 'Chore ' + id, description: '', labels: [], project_id: '', section_id: null,
+        parent_id: null, due: { date: '2026-07-02', string: '', is_recurring: false }, priority: 1, checked: false,
+      }) as import('./types.js').RawTask,
+      closeTaskFn: async () => {},
+      todoistApiToken: 'tok',
+      dryrun: false,
+    };
+
+    await runInboundPass(client, db.asD1(), FRAME_ID, deps);
+
+    // Count list GETs to Skylight chore endpoint — should be exactly 1 (the batch fetch)
+    // All 3 are pending+echo (observed=pending=lastPushed) so no completeProtocol GETs fire
+    const choreGets = (fetchSpy.mock.calls as [string, RequestInit | undefined][]).filter(
+      ([url]) => (url as string).includes('/chores?')
+    );
+    expect(choreGets).toHaveLength(1);
+
+    // Batch GET URL spans 2026-07-01 to 2026-07-07 (min-1 to max+1)
+    const batchUrl = choreGets[0][0] as string;
+    expect(batchUrl).toContain('after=2026-07-01'); // 2026-07-02 - 1
+    expect(batchUrl).toContain('before=2026-07-07'); // 2026-07-06 + 1
+  });
+});

@@ -68,6 +68,17 @@ import {
   rollOccurrenceDate,
 } from './db.js';
 import {
+  SubrequestCounter,
+  SUBREQUEST_BUDGET,
+  TAIL_RESERVE,
+  INBOUND_ROW_COST,
+  MUTATION_COST_COMPLETE,
+  MUTATION_COST_DELETE,
+  MUTATION_COST_ROLL,
+  MUTATION_COST_MIGRATE,
+} from './subrequest-counter.js';
+import { makeCountedD1, makeCountedKV } from './counted-wrappers.js';
+import {
   surface,
   fingerprint,
   decide,
@@ -76,6 +87,30 @@ import {
   isCarrier,
 } from './reconcile.js';
 import type { ProfileId } from './deck.js';
+
+// ---------------------------------------------------------------------------
+// Budget sentinel — used to break out of the create loop cleanly
+// ---------------------------------------------------------------------------
+
+/**
+ * Thrown (and immediately caught at the task-loop level) when the subrequest
+ * budget would be exhausted by initiating another create. This is NOT a real
+ * error — it is a structured control-flow signal that tells the outbound loop
+ * to stop initiating new creates and run the tail (batch verify + inbound pass).
+ *
+ * By throwing rather than using a flag variable, we cleanly exit the nested
+ * action-loop AND the task-loop with a single mechanism.
+ */
+export class BudgetExhaustedError extends Error {
+  constructor(
+    public readonly deferredCount: number,
+    public readonly usedSoFar: number,
+    public readonly budget: number
+  ) {
+    super(`Budget exhausted: used ${usedSoFar}/${budget}, deferred ${deferredCount} tasks`);
+    this.name = 'BudgetExhaustedError';
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -106,6 +141,249 @@ const WINDOW_DAYS_FUTURE = 90;
  */
 export function buildListItemLabel(content: string, _todoistId: string): string {
   return content;
+}
+
+// ---------------------------------------------------------------------------
+// Run context: subrequest counter + in-memory mapping cache
+// ---------------------------------------------------------------------------
+
+/**
+ * RunContext holds cross-cutting concerns for a single scheduled run:
+ *   - counter: tracks every subrequest-consuming operation
+ *   - mappingCache: all mapping rows loaded once at run start
+ *
+ * Passed through the outbound/inbound pass chain so the budget guard
+ * and cache lookups are available at every create site.
+ *
+ * When ctx is undefined (e.g. in unit tests that call runOutboundPass directly),
+ * the budget guard is disabled and per-task D1 lookups fall through to the
+ * database normally — preserving full backward compatibility with existing tests.
+ */
+export interface RunContext {
+  counter: SubrequestCounter;
+  mappingCache: MappingCache;
+  /** Raw (uncounted) D1 for use inside batch() calls where counting is done by CountedD1 */
+  rawDb: D1Database;
+}
+
+/**
+ * MappingCache: loads ALL mapping rows for a frame in ONE D1 SELECT at run start.
+ *
+ * Per-task lookups hit the Map (0 D1 reads), dramatically reducing subrequest
+ * count in the outbound pass loop (from N reads for N tasks to 1 total).
+ *
+ * The cache is kept consistent with in-flight writes:
+ *   - insert: adds row to cache immediately after D1 write
+ *   - update (state change, skylight_id, etc.): merges into cache
+ *   - delete: removes from cache
+ *
+ * The scheduled handler calls `loadAll()` once before the outbound pass.
+ */
+export class MappingCache {
+  // Primary index: `${todoist_id}:${occurrence_date}` → row
+  private byKey = new Map<string, MappingRow>();
+  // Secondary index: todoist_id → all rows (for getMappingsByTodoistId lookups)
+  private byTodoistId = new Map<string, MappingRow[]>();
+
+  private key(todoistId: string, occurrenceDate: string): string {
+    return `${todoistId}:${occurrenceDate}`;
+  }
+
+  /** Load ALL rows from D1 into memory. Call once at run start. */
+  async loadAll(db: D1Database): Promise<void> {
+    const result = await db.prepare('SELECT * FROM mapping').all<MappingRow>();
+    const rows = result.results ?? [];
+    this.byKey.clear();
+    this.byTodoistId.clear();
+    for (const row of rows) {
+      this.setRow(row);
+    }
+    console.log(`[skylight-sync] mapping-cache: loaded ${rows.length} rows`);
+  }
+
+  private setRow(row: MappingRow): void {
+    const k = this.key(row.todoist_id, row.occurrence_date);
+    this.byKey.set(k, row);
+    // Update byTodoistId index
+    let list = this.byTodoistId.get(row.todoist_id);
+    if (!list) {
+      list = [];
+      this.byTodoistId.set(row.todoist_id, list);
+    }
+    // Replace if exists, else push
+    const idx = list.findIndex(
+      (r) => r.occurrence_date === row.occurrence_date
+    );
+    if (idx >= 0) {
+      list[idx] = row;
+    } else {
+      list.push(row);
+    }
+  }
+
+  private removeRow(todoistId: string, occurrenceDate: string): void {
+    const k = this.key(todoistId, occurrenceDate);
+    this.byKey.delete(k);
+    const list = this.byTodoistId.get(todoistId);
+    if (list) {
+      const idx = list.findIndex((r) => r.occurrence_date === occurrenceDate);
+      if (idx >= 0) list.splice(idx, 1);
+      if (list.length === 0) this.byTodoistId.delete(todoistId);
+    }
+  }
+
+  /** getMappingByTodoistId equivalent — O(1), no D1 */
+  getByKey(todoistId: string, occurrenceDate: string): MappingRow | null {
+    return this.byKey.get(this.key(todoistId, occurrenceDate)) ?? null;
+  }
+
+  /** getMappingsByTodoistId equivalent — O(1), no D1 */
+  getAllForTodoistId(todoistId: string): MappingRow[] {
+    return this.byTodoistId.get(todoistId) ?? [];
+  }
+
+  /** getActiveMappings equivalent — scans all cached rows */
+  getActive(): MappingRow[] {
+    return [...this.byKey.values()].filter((r) => r.state === 'active');
+  }
+
+  /** getActiveMappingsBySurface equivalent */
+  getActiveBySurface(surface: 'chore' | 'list'): MappingRow[] {
+    return [...this.byKey.values()].filter(
+      (r) => r.state === 'active' && r.surface === surface
+    );
+  }
+
+  /** getDeletingMappings equivalent */
+  getDeleting(): MappingRow[] {
+    return [...this.byKey.values()].filter((r) => r.state === 'deleting');
+  }
+
+  // ── Cache mutation helpers (call AFTER the D1 write succeeds) ──────────────
+
+  upsert(row: MappingRow): void {
+    this.setRow(row);
+  }
+
+  patch(todoistId: string, occurrenceDate: string, changes: Partial<MappingRow>): void {
+    const existing = this.byKey.get(this.key(todoistId, occurrenceDate));
+    if (existing) {
+      this.setRow({ ...existing, ...changes });
+    }
+  }
+
+  remove(todoistId: string, occurrenceDate: string): void {
+    this.removeRow(todoistId, occurrenceDate);
+  }
+}
+
+/**
+ * CountedSkylightClient — subclass that increments a SubrequestCounter
+ * on every public HTTP-making method call.
+ *
+ * Each public method maps to exactly 1 HTTP request (1 subrequest).
+ * Overrides every public method to count before delegating to super.
+ */
+export class CountedSkylightClient extends SkylightClient {
+  constructor(
+    opts: ConstructorParameters<typeof SkylightClient>[0],
+    private readonly counter: SubrequestCounter
+  ) {
+    super(opts);
+  }
+
+  override async getFrame(): ReturnType<SkylightClient['getFrame']> {
+    this.counter.incrementSkylight();
+    return super.getFrame();
+  }
+
+  override async assertFrameFingerprint(fp: string): Promise<void> {
+    // getFrame() inside assertFrameFingerprint will count via override above
+    return super.assertFrameFingerprint(fp);
+  }
+
+  override async listChores(...args: Parameters<SkylightClient['listChores']>): ReturnType<SkylightClient['listChores']> {
+    this.counter.incrementSkylight();
+    return super.listChores(...args);
+  }
+
+  override async getChoreById(...args: Parameters<SkylightClient['getChoreById']>): ReturnType<SkylightClient['getChoreById']> {
+    this.counter.incrementSkylight();
+    return super.getChoreById(...args);
+  }
+
+  override async batchFetchChoresByIds(...args: Parameters<SkylightClient['batchFetchChoresByIds']>): ReturnType<SkylightClient['batchFetchChoresByIds']> {
+    this.counter.incrementSkylight();
+    return super.batchFetchChoresByIds(...args);
+  }
+
+  override async createChore(...args: Parameters<SkylightClient['createChore']>): ReturnType<SkylightClient['createChore']> {
+    this.counter.incrementSkylight();
+    return super.createChore(...args);
+  }
+
+  override async completeChore(...args: Parameters<SkylightClient['completeChore']>): ReturnType<SkylightClient['completeChore']> {
+    this.counter.incrementSkylight();
+    return super.completeChore(...args);
+  }
+
+  override async deleteChore(...args: Parameters<SkylightClient['deleteChore']>): ReturnType<SkylightClient['deleteChore']> {
+    this.counter.incrementSkylight();
+    return super.deleteChore(...args);
+  }
+
+  override async verifyCompleted(...args: Parameters<SkylightClient['verifyCompleted']>): ReturnType<SkylightClient['verifyCompleted']> {
+    // verifyCompleted delegates to getChoreById which is already counted above
+    // So we must NOT double-count here — don't call super.verifyCompleted
+    // Instead replicate the logic using the already-counted getChoreById:
+    return super.verifyCompleted(...args);
+    // NOTE: getChoreById inside verifyCompleted goes through the override and counts
+  }
+
+  override async verifyDeleted(...args: Parameters<SkylightClient['verifyDeleted']>): ReturnType<SkylightClient['verifyDeleted']> {
+    // Same as verifyCompleted — getChoreById inside is already counted
+    return super.verifyDeleted(...args);
+  }
+
+  override async getLists(): ReturnType<SkylightClient['getLists']> {
+    this.counter.incrementSkylight();
+    return super.getLists();
+  }
+
+  override async getList(...args: Parameters<SkylightClient['getList']>): ReturnType<SkylightClient['getList']> {
+    this.counter.incrementSkylight();
+    return super.getList(...args);
+  }
+
+  override async createList(...args: Parameters<SkylightClient['createList']>): ReturnType<SkylightClient['createList']> {
+    this.counter.incrementSkylight();
+    return super.createList(...args);
+  }
+
+  override async deleteList(...args: Parameters<SkylightClient['deleteList']>): ReturnType<SkylightClient['deleteList']> {
+    this.counter.incrementSkylight();
+    return super.deleteList(...args);
+  }
+
+  override async createListItem(...args: Parameters<SkylightClient['createListItem']>): ReturnType<SkylightClient['createListItem']> {
+    this.counter.incrementSkylight();
+    return super.createListItem(...args);
+  }
+
+  override async completeListItem(...args: Parameters<SkylightClient['completeListItem']>): ReturnType<SkylightClient['completeListItem']> {
+    this.counter.incrementSkylight();
+    return super.completeListItem(...args);
+  }
+
+  override async deleteListItem(...args: Parameters<SkylightClient['deleteListItem']>): ReturnType<SkylightClient['deleteListItem']> {
+    this.counter.incrementSkylight();
+    return super.deleteListItem(...args);
+  }
+
+  override async getListItems(...args: Parameters<SkylightClient['getListItems']>): ReturnType<SkylightClient['getListItems']> {
+    // getListItems delegates to getList() which is already counted via override
+    return super.getListItems(...args);
+  }
 }
 
 /** Get a frame-timezone-aware ISO date string (YYYY-MM-DD). */
@@ -360,14 +638,23 @@ export async function runOutboundPass(
   profile: ProfileId,
   categoryId: string | null,
   timezone: string,
-  bridgeListId?: string
+  bridgeListId?: string,
+  ctx?: RunContext
 ): Promise<void> {
   console.log(`[skylight-sync] outbound: profile=${profile}`);
 
-  const tasks = await fetchDeckTasks(profile, env.TODOIST_API_TOKEN);
+  // Pass an onFetch hook so every paginated GET inside fetchDeckTasks
+  // (fetchProjects pages + fetchAllTasks pages) increments the counter precisely.
+  // This replaces the old flat +2 which severely under-counted multi-card decks.
+  const onTodoistFetch = ctx ? () => ctx.counter.incrementTodoist() : undefined;
+  const tasks = await fetchDeckTasks(profile, env.TODOIST_API_TOKEN, onTodoistFetch);
   console.log(`[skylight-sync] outbound: ${tasks.length} deck tasks for ${profile}`);
 
   const dryrun = (env.DRYRUN ?? 'true') !== 'false';
+
+  // Collect fresh chore creates for batch verification (POST-only phase).
+  // After the loop, ONE list GET verifies all of them together.
+  const pendingCreates: PendingCreateEntry[] = [];
 
   for (const task of tasks) {
     try {
@@ -386,14 +673,19 @@ export async function runOutboundPass(
           continue;
         }
         // Get existing mapping (occurrence_date='' for list items)
-        const row = await getMappingByTodoistId(db, task.id, '');
+        // Cache-first: when ctx is present, use the in-memory cache (0 D1 reads).
+        const row = ctx
+          ? ctx.mappingCache.getByKey(task.id, '')
+          : await getMappingByTodoistId(db, task.id, '');
 
         // ── Surface migration dispatch (chore→list): task LOST its due date ──
         // The list-keyed lookup above returns null when the old row is a chore
         // (keyed by occurrence_date != ''). Load all rows and look for an active
         // chore row; if found, migrate it instead of creating a duplicate list item.
         if (!row) {
-          const allRows = await getMappingsByTodoistId(db, task.id);
+          const allRows = ctx
+            ? ctx.mappingCache.getAllForTodoistId(task.id)
+            : await getMappingsByTodoistId(db, task.id);
           const oldChoreRow = allRows.find(
             (r) => r.state === 'active' && r.surface === 'chore' && r.frame_id === frameId
           );
@@ -401,6 +693,17 @@ export async function runOutboundPass(
             console.log(
               `[skylight-sync] outbound: task ${task.id} lost its due date — migrating chore→list`
             );
+            // ── Mutation budget guard ─────────────────────────────────────────
+            // CRITICAL: check BEFORE the migrate begins so we never leave a
+            // half-done migration (old surface deleted, new not yet created).
+            if (ctx && !ctx.counter.canAfford(TAIL_RESERVE, MUTATION_COST_MIGRATE)) {
+              const remaining = tasks.slice(tasks.indexOf(task)).length;
+              console.log(
+                `[skylight-sync] deferred ${remaining} mutation(s) to next run ` +
+                  `(subrequest budget: used ${ctx.counter.total} of ${ctx.counter.budget})`
+              );
+              throw new BudgetExhaustedError(remaining, ctx.counter.total, ctx.counter.budget);
+            }
             await runMigrateSurfaceProtocol(
               client, db, oldChoreRow, task, 'chore', 'list',
               frameId, profile, categoryId, bridgeListId, dryrun, timezone
@@ -429,6 +732,17 @@ export async function runOutboundPass(
             }
             case 'MIGRATE_SURFACE': {
               if (!row) break;
+              // ── Mutation budget guard ─────────────────────────────────────────
+              // CRITICAL: check BEFORE the migrate begins so we never leave a
+              // half-done migration (old surface deleted, new not yet created).
+              if (ctx && !ctx.counter.canAfford(TAIL_RESERVE, MUTATION_COST_MIGRATE)) {
+                const remaining = tasks.slice(tasks.indexOf(task)).length;
+                console.log(
+                  `[skylight-sync] deferred ${remaining} mutation(s) to next run ` +
+                    `(subrequest budget: used ${ctx.counter.total} of ${ctx.counter.budget})`
+                );
+                throw new BudgetExhaustedError(remaining, ctx.counter.total, ctx.counter.budget);
+              }
               await runMigrateSurfaceProtocol(
                 client, db, row, task, action.fromSurface, action.toSurface,
                 frameId, profile, categoryId, bridgeListId, dryrun, timezone
@@ -450,14 +764,19 @@ export async function runOutboundPass(
       // §5 Recurring tasks: the row is keyed by the CURRENT occurrence_date.
       // Also check for any existing row for THIS todoist_id (across occurrence_dates)
       // in case the occurrence_date changed since we last synced.
-      let row = await getMappingByTodoistId(db, task.id, curOccurrenceDate);
+      // Cache-first: when ctx is present, use the in-memory cache (0 D1 reads).
+      let row = ctx
+        ? ctx.mappingCache.getByKey(task.id, curOccurrenceDate)
+        : await getMappingByTodoistId(db, task.id, curOccurrenceDate);
 
       // ── Surface migration dispatch (list→chore): task GAINED a due date ──
       // The chore-keyed lookup above returns null when the old row is a list item
       // (keyed at occurrence_date=''). Load all rows and look for an active list
       // row; if found, migrate it instead of creating a duplicate chore.
       if (!row) {
-        const allRowsForMigrate = await getMappingsByTodoistId(db, task.id);
+        const allRowsForMigrate = ctx
+          ? ctx.mappingCache.getAllForTodoistId(task.id)
+          : await getMappingsByTodoistId(db, task.id);
         const oldListRow = allRowsForMigrate.find(
           (r) => r.state === 'active' && r.surface === 'list' && r.frame_id === frameId
         );
@@ -465,6 +784,17 @@ export async function runOutboundPass(
           console.log(
             `[skylight-sync] outbound: task ${task.id} gained a due date — migrating list→chore`
           );
+          // ── Mutation budget guard ─────────────────────────────────────────
+          // CRITICAL: check BEFORE the migrate begins so we never leave a
+          // half-done migration (old surface deleted, new not yet created).
+          if (ctx && !ctx.counter.canAfford(TAIL_RESERVE, MUTATION_COST_MIGRATE)) {
+            const remaining = tasks.slice(tasks.indexOf(task)).length;
+            console.log(
+              `[skylight-sync] deferred ${remaining} mutation(s) to next run ` +
+                `(subrequest budget: used ${ctx.counter.total} of ${ctx.counter.budget})`
+            );
+            throw new BudgetExhaustedError(remaining, ctx.counter.total, ctx.counter.budget);
+          }
           const effectiveBridgeListId = bridgeListId ?? '';
           await runMigrateSurfaceProtocol(
             client, db, oldListRow, task, 'list', 'chore',
@@ -478,7 +808,9 @@ export async function runOutboundPass(
       // look for an existing row for this todoist_id with an older occurrence_date.
       // If found and occurrence_date strictly < curOccurrenceDate, we have a roll situation.
       if (!row && surf.isRecurring) {
-        const allRows = await getMappingsByTodoistId(db, task.id);
+        const allRows = ctx
+          ? ctx.mappingCache.getAllForTodoistId(task.id)
+          : await getMappingsByTodoistId(db, task.id);
         const activeOldRow = allRows.find(
           (r) =>
             r.state === 'active' &&
@@ -490,6 +822,18 @@ export async function runOutboundPass(
             `[skylight-sync] outbound: recurring task ${task.id} due advanced ` +
               `from ${activeOldRow.occurrence_date} → ${curOccurrenceDate} — rolling`
           );
+          // ── Mutation budget guard ─────────────────────────────────────────
+          // CRITICAL: ROLL = delete (~5) + create (~5) = ~10 subrequests.
+          // Must check BEFORE starting so the guard NEVER leaves a half-done roll
+          // (old occurrence deleted but new occurrence not yet created).
+          if (ctx && !ctx.counter.canAfford(TAIL_RESERVE, MUTATION_COST_ROLL)) {
+            const remaining = tasks.slice(tasks.indexOf(task)).length;
+            console.log(
+              `[skylight-sync] deferred ${remaining} mutation(s) to next run ` +
+                `(subrequest budget: used ${ctx.counter.total} of ${ctx.counter.budget})`
+            );
+            throw new BudgetExhaustedError(remaining, ctx.counter.total, ctx.counter.budget);
+          }
           await runRollProtocol(
             client, db, activeOldRow, curOccurrenceDate,
             task, frameId, profile, categoryId, timezone, dryrun
@@ -507,22 +851,125 @@ export async function runOutboundPass(
       for (const action of actions) {
         switch (action.type) {
           case 'CREATE_CHORE': {
-            await runCreateProtocol(client, db, task, row, frameId, profile, curOccurrenceDate, categoryId, timezone, dryrun);
+            // ── Batched create path ────────────────────────────────────────────
+            // For normal (non-interrupted) creates, use the POST-only path to
+            // accumulate creates; a single batched list GET verifies all of them
+            // after the loop. Interrupted creates (row.state='creating') fall back
+            // to the single-chore path for individual resolution.
+            if (!row || row.state !== 'creating') {
+              // ── Budget guard ─────────────────────────────────────────────────
+              // Each create costs 2 subrequests: 1 D1 write-ahead + 1 Skylight POST.
+              // Reserve TAIL_RESERVE for the run tail (batch verify + commit + inbound pass).
+              // If proceeding would exhaust the budget, defer this task and all remaining
+              // unmapped tasks — they will be picked up on the next cron tick.
+              // CRITICAL: only start a create you can FINISH this run so there are
+              // NEVER dangling 'creating' rows for deferred items.
+              if (ctx && !ctx.counter.canAfford(TAIL_RESERVE, 2)) {
+                // Count how many tasks remain unmapped (will be deferred)
+                const remainingTasks = tasks.slice(tasks.indexOf(task));
+                const deferCount = remainingTasks.filter((t) => {
+                  const s = surface(t);
+                  if (s.kind !== 'chore') return false;
+                  const r = ctx.mappingCache.getByKey(t.id, s.occurrenceDate);
+                  return !r || r.state === 'creating';
+                }).length;
+                console.log(
+                  `[skylight-sync] deferred ${deferCount} task(s) to next run ` +
+                    `(subrequest budget: used ${ctx.counter.total} of ${ctx.counter.budget})`
+                );
+                // Break out of the action loop and stop processing tasks
+                // by throwing a sentinel we catch below at the task-loop level
+                throw new BudgetExhaustedError(deferCount, ctx.counter.total, ctx.counter.budget);
+              }
+              try {
+                const pending = await runCreateProtocolPostOnly(
+                  client, db, task, row, frameId, profile, curOccurrenceDate, categoryId, dryrun
+                );
+                if (pending) {
+                  pendingCreates.push(pending);
+                  // Keep cache consistent: mark this task as 'creating' so follow-up
+                  // lookups in the same run see it.
+                  if (ctx) {
+                    ctx.mappingCache.upsert({
+                      todoist_id: task.id,
+                      fp_stable_id: null,
+                      occurrence_date: curOccurrenceDate,
+                      surface: 'chore',
+                      frame_id: frameId,
+                      profile,
+                      skylight_id: pending.skylightId,
+                      expected_summary: pending.expectedSummary,
+                      last_pushed_status: null,
+                      observed_status: null,
+                      last_pushed_hash: null,
+                      state: 'creating',
+                      idem_token: null,
+                      updated_at: null,
+                    });
+                  }
+                }
+              } catch (createErr) {
+                if (createErr instanceof BudgetExhaustedError) throw createErr;
+                if (createErr instanceof TodoistRateLimitError) throw createErr;
+                const msg = createErr instanceof Error ? createErr.message : String(createErr);
+                console.error(`[skylight-sync] outbound create-post error for task ${task.id}: ${msg}`);
+                // Continue — idempotent resume
+              }
+            } else {
+              // Interrupted create — use single-chore protocol (with its own read-back)
+              await runCreateProtocol(client, db, task, row, frameId, profile, curOccurrenceDate, categoryId, timezone, dryrun);
+            }
             break;
           }
           case 'COMPLETE_CHORE': {
             if (!row?.skylight_id) break;
+            // ── Mutation budget guard ─────────────────────────────────────────
+            // Check BEFORE the multi-step protocol begins so the guard can never
+            // leave a half-completed action. Deferring is safe: an un-completed
+            // chore is simply re-evaluated idempotently on the next cron tick.
+            if (ctx && !ctx.counter.canAfford(TAIL_RESERVE, MUTATION_COST_COMPLETE)) {
+              const remaining = tasks.slice(tasks.indexOf(task)).length;
+              console.log(
+                `[skylight-sync] deferred ${remaining} mutation(s) to next run ` +
+                  `(subrequest budget: used ${ctx.counter.total} of ${ctx.counter.budget})`
+              );
+              throw new BudgetExhaustedError(remaining, ctx.counter.total, ctx.counter.budget);
+            }
             await runCompleteProtocol(client, db, row, dryrun);
             break;
           }
           case 'DELETE_CHORE': {
             if (!row) break;
+            // ── Mutation budget guard ─────────────────────────────────────────
+            // Check BEFORE the multi-step protocol begins. Deferring is safe:
+            // an un-deleted chore is re-evaluated on the next cron tick.
+            if (ctx && !ctx.counter.canAfford(TAIL_RESERVE, MUTATION_COST_DELETE)) {
+              const remaining = tasks.slice(tasks.indexOf(task)).length;
+              console.log(
+                `[skylight-sync] deferred ${remaining} mutation(s) to next run ` +
+                  `(subrequest budget: used ${ctx.counter.total} of ${ctx.counter.budget})`
+              );
+              throw new BudgetExhaustedError(remaining, ctx.counter.total, ctx.counter.budget);
+            }
             await runDeleteProtocol(client, db, row, dryrun);
             break;
           }
           case 'ROLL_CHORE': {
             // §5: outbound roll — Todoist due advanced while row was keyed by old date
             if (!row) break;
+            // ── Mutation budget guard ─────────────────────────────────────────
+            // CRITICAL: ROLL = delete (~5) + create (~3) = ~10 subrequests.
+            // Must check BEFORE starting so the guard NEVER leaves a half-done roll
+            // (i.e., old occurrence deleted but new occurrence not yet created).
+            // Deferring is safe: an un-rolled occurrence is re-evaluated next tick.
+            if (ctx && !ctx.counter.canAfford(TAIL_RESERVE, MUTATION_COST_ROLL)) {
+              const remaining = tasks.slice(tasks.indexOf(task)).length;
+              console.log(
+                `[skylight-sync] deferred ${remaining} mutation(s) to next run ` +
+                  `(subrequest budget: used ${ctx.counter.total} of ${ctx.counter.budget})`
+              );
+              throw new BudgetExhaustedError(remaining, ctx.counter.total, ctx.counter.budget);
+            }
             await runRollProtocol(
               client, db, row, action.newOccurrenceDate,
               task, frameId, profile, categoryId, timezone, dryrun
@@ -540,6 +987,19 @@ export async function runOutboundPass(
           case 'MIGRATE_SURFACE': {
             // Task that had a list row now has a due date → chore
             if (!row) break;
+            // ── Mutation budget guard ─────────────────────────────────────────
+            // CRITICAL: MIGRATE = delete (~5) + create (~5) = ~10 subrequests.
+            // Must check BEFORE starting so the guard NEVER leaves a half-done
+            // migration (old surface deleted but new surface not yet created).
+            // Deferring is safe: the task is re-evaluated idempotently next tick.
+            if (ctx && !ctx.counter.canAfford(TAIL_RESERVE, MUTATION_COST_MIGRATE)) {
+              const remaining = tasks.slice(tasks.indexOf(task)).length;
+              console.log(
+                `[skylight-sync] deferred ${remaining} mutation(s) to next run ` +
+                  `(subrequest budget: used ${ctx.counter.total} of ${ctx.counter.budget})`
+              );
+              throw new BudgetExhaustedError(remaining, ctx.counter.total, ctx.counter.budget);
+            }
             const effectiveBridgeListId = bridgeListId ?? '';
             await runMigrateSurfaceProtocol(
               client, db, row, task, action.fromSurface, action.toSurface,
@@ -570,6 +1030,16 @@ export async function runOutboundPass(
         }
       }
     } catch (err) {
+      if (err instanceof BudgetExhaustedError) {
+        // Budget exhausted: stop initiating new creates. Fall through to batch verify
+        // and the inbound pass. The remaining unmapped tasks will be picked up on the
+        // next cron tick. BudgetExhaustedError is NOT re-thrown — it is handled here.
+        console.log(
+          `[skylight-sync] outbound: budget guard stopped creates at task ${task.id} ` +
+            `(${err.deferredCount} deferred, used ${err.usedSoFar}/${err.budget})`
+        );
+        break; // exit the task loop — run the tail (batch verify + inbound)
+      }
       if (err instanceof TodoistRateLimitError) {
         console.error(`[skylight-sync] 429 exhausted in outbound pass — checkpointing`);
         throw err; // propagate to top-level handler for clean exit
@@ -579,11 +1049,251 @@ export async function runOutboundPass(
       // Continue with next task — idempotent resume
     }
   }
+
+  // ── Batched create verification: ONE list GET verifies all just-created chores ──
+  if (pendingCreates.length > 0) {
+    console.log(
+      `[skylight-sync] outbound: batched-verify ${pendingCreates.length} create(s) with ONE list query`
+    );
+    try {
+      await runBatchedCreateVerify(client, db, pendingCreates, dryrun);
+    } catch (err) {
+      if (err instanceof TodoistRateLimitError) throw err;
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[skylight-sync] outbound batched-verify error: ${msg}`);
+      // Continue — individual rows left in 'creating' state for resume on next run
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
 // Create protocol (§9 write-ahead + verify)
 // ---------------------------------------------------------------------------
+
+/**
+ * Descriptor for a chore that was successfully POSTed and needs batch verification.
+ * Used by runBatchedCreateVerify to correlate batch list results back to tasks.
+ */
+export interface PendingCreateEntry {
+  task: { id: string; content: string; due: { date: string } | null; description: string; labels: string[] };
+  occurrenceDate: string;
+  profile: string;
+  skylightId: string;
+  dueDate: string;
+  descMarker: string;
+  expectedSummary: string;
+}
+
+/**
+ * Batch verify N just-created chores with a SINGLE windowed list GET.
+ *
+ * After N create POSTs have each returned their new skylightId, this function:
+ *   1. Computes a window [min(dueDate)-1d, max(dueDate)+1d] that covers all chores.
+ *   2. Issues ONE GET /chores?after=...&before=... with include_late, include_up_for_grabs, filter.
+ *   3. For each pending create, looks up the chore by exact id in the batch response.
+ *      - Found + descMarker matches → commitActiveRow (active)
+ *      - Found + descMarker mismatch → markNeedsReview
+ *      - Not found in window → markNeedsReview
+ *
+ * D1 batch write: all commitActiveRow calls are issued via db.batch() so that
+ * N commits cost 1 D1 subrequest instead of N. This is the primary subrequest
+ * reduction for the commit phase.
+ *
+ * This replaces N separate getChoreById calls (one per chore) with a SINGLE list GET.
+ *
+ * @param client  Live SkylightClient
+ * @param db      D1 database
+ * @param entries Pending creates from the outbound pass
+ * @param dryrun  When true, skips all D1 writes
+ */
+export async function runBatchedCreateVerify(
+  client: SkylightClient,
+  db: D1Database,
+  entries: PendingCreateEntry[],
+  dryrun = false
+): Promise<void> {
+  if (entries.length === 0) return;
+
+  console.log(`[skylight-sync] batched-create-verify: verifying ${entries.length} just-created chore(s) with ONE list query`);
+
+  // ONE batched list GET spanning all creation dates
+  const batchMap = await client.batchFetchChoresByIds(
+    entries.map((e) => ({ id: e.skylightId, date: e.dueDate }))
+  );
+
+  // Collect statements for batch D1 commit (ONE db.batch() replaces N individual .run() calls)
+  const batchCommitStatements: D1PreparedStatement[] = [];
+  const batchNeedsReviewStatements: D1PreparedStatement[] = [];
+  const now = Math.floor(Date.now() / 1000);
+
+  // Verify each created chore and prepare batch statements
+  for (const entry of entries) {
+    const { task, occurrenceDate, profile, skylightId, dueDate, descMarker, expectedSummary } = entry;
+    const readback = batchMap.get(skylightId);
+
+    if (!readback) {
+      console.error(
+        `[skylight-sync] batched-create-verify: chore ${skylightId} absent from batch window — marking needs_review`
+      );
+      if (!dryrun) {
+        batchNeedsReviewStatements.push(
+          db
+            .prepare(`UPDATE mapping SET state = 'needs_review', updated_at = ? WHERE todoist_id = ? AND occurrence_date = ?`)
+            .bind(now, task.id, occurrenceDate)
+        );
+      }
+      continue;
+    }
+
+    // §9: assert description marker echoed back (ownership verification)
+    if (!descriptionMatchesMarker(readback.attributes.description, descMarker)) {
+      console.error(
+        `[skylight-sync] batched-create-verify: description mismatch for ${skylightId}. ` +
+          `Expected: "${descMarker}", got: "${readback.attributes.description}". Marking needs_review.`
+      );
+      if (!dryrun) {
+        batchNeedsReviewStatements.push(
+          db
+            .prepare(`UPDATE mapping SET state = 'needs_review', updated_at = ? WHERE todoist_id = ? AND occurrence_date = ?`)
+            .bind(now, task.id, occurrenceDate)
+        );
+      }
+      continue;
+    }
+
+    // §9: assert start date matches
+    if (readback.attributes.start !== dueDate) {
+      console.warn(
+        `[skylight-sync] batched-create-verify: start date mismatch for ${skylightId}. ` +
+          `Expected: "${dueDate}", got: "${readback.attributes.start}". Committing anyway (Skylight may normalize dates).`
+      );
+    }
+
+    // Prepare commit statement — will be batched below
+    const hash = fingerprint(
+      { id: task.id, content: task.content, due: task.due, description: task.description, labels: task.labels, project_id: '', section_id: null, parent_id: null, priority: 1, checked: false } as import('./types.js').RawTask,
+      profile
+    );
+    console.log(
+      `[skylight-sync] batched-create-verify: chore ${skylightId} verified for task ${task.id} (description marker="${descMarker}")`
+    );
+    if (!dryrun) {
+      batchCommitStatements.push(
+        db
+          .prepare(
+            `UPDATE mapping SET state = 'active', skylight_id = ?, expected_summary = ?, ` +
+              `last_pushed_status = 'pending', last_pushed_hash = ?, updated_at = ? ` +
+              `WHERE todoist_id = ? AND occurrence_date = ?`
+          )
+          .bind(skylightId, expectedSummary, hash, now, task.id, occurrenceDate)
+      );
+    }
+  }
+
+  // ── Batch D1 writes: ONE db.batch() call for all commits + needs_review ──
+  // This reduces N individual D1 .run() calls to 1 subrequest.
+  // Falls back to individual .run() calls when db.batch is not available
+  // (e.g., InMemoryD1 in unit tests that haven't implemented batch()).
+  const allStatements = [...batchCommitStatements, ...batchNeedsReviewStatements];
+  if (allStatements.length > 0 && !dryrun) {
+    if (typeof db.batch === 'function') {
+      await db.batch(allStatements);
+      console.log(
+        `[skylight-sync] batched-create-verify: committed ${batchCommitStatements.length} active, ` +
+          `${batchNeedsReviewStatements.length} needs_review in ONE db.batch()`
+      );
+    } else {
+      // Fallback for environments without batch() support (e.g., tests)
+      for (const stmt of allStatements) {
+        await stmt.run();
+      }
+    }
+  }
+}
+
+/**
+ * POST-only phase of the create protocol (for use in the batched outbound path).
+ *
+ * Handles write-ahead + POST for a single chore, but does NOT do the per-chore
+ * read-back GET. Instead it returns a PendingCreateEntry for batch verification.
+ *
+ * Returns null when:
+ *   - DRYRUN (no write issued)
+ *   - existingRow is already 'creating' with a skylight_id (these are handled by
+ *     runCreateProtocol instead, since they need individual resolution)
+ *   - existingRow is 'creating' without skylight_id (interrupted — handled by
+ *     runCreateProtocol's description-marker scan)
+ *
+ * @returns PendingCreateEntry if a POST was issued, null otherwise.
+ */
+export async function runCreateProtocolPostOnly(
+  client: SkylightClient,
+  db: D1Database,
+  task: { id: string; content: string; due: { date: string } | null; description: string; labels: string[] },
+  existingRow: MappingRow | null,
+  frameId: string,
+  profile: string,
+  occurrenceDate: string,
+  categoryId: string | null,
+  dryrun = false
+): Promise<PendingCreateEntry | null> {
+  const idemToken = sentinelToken(task.id);
+  const cleanSummary = task.content;
+  const descMarker = choreDescriptionMarker(task.id);
+  const dueDate = task.due?.date ?? occurrenceDate;
+  const expectedSummary = cleanSummary;
+
+  // Route any interrupted/already-creating rows back to the single-chore path
+  if (existingRow?.state === 'creating') {
+    return null; // handled by runCreateProtocol
+  }
+
+  if (dryrun) {
+    console.log(`[skylight-sync] DRYRUN: would create chore for task ${task.id} (summary="${cleanSummary}", description="${descMarker}")`);
+    return null;
+  }
+
+  // §9: write-ahead 'creating' row BEFORE the POST
+  if (!existingRow) {
+    const { meta } = (await import('./metadata.js')).parseFp(task.description ?? '');
+    const fpStableId = typeof meta['id'] === 'string' ? meta['id'] : null;
+
+    await insertCreatingRow(db, {
+      todoist_id: task.id,
+      fp_stable_id: fpStableId,
+      occurrence_date: occurrenceDate,
+      surface: 'chore',
+      frame_id: frameId,
+      profile,
+      skylight_id: null,
+      expected_summary: expectedSummary,
+      last_pushed_status: null,
+      observed_status: null,
+      last_pushed_hash: null,
+      state: 'creating',
+      idem_token: idemToken,
+    });
+  }
+
+  // POST the chore — clean summary, ownership marker in description
+  const created = await client.createChore({
+    summary: cleanSummary,
+    start: dueDate,
+    categoryId,
+    idemToken,
+    description: descMarker,
+  });
+
+  return {
+    task,
+    occurrenceDate,
+    profile,
+    skylightId: created.id,
+    dueDate,
+    descMarker,
+    expectedSummary,
+  };
+}
 
 export async function runCreateProtocol(
   client: SkylightClient,
@@ -699,7 +1409,7 @@ export async function runCreateProtocol(
 
   const skylightId = created.id;
 
-  // §9: read-back via list to confirm
+  // §9: read-back via list to confirm (single create path — used for roll, migration)
   const readback = await client.getChoreById(skylightId, dueDate);
   if (!readback) {
     console.error(
@@ -1089,7 +1799,15 @@ export async function runInboundListPoll(
   bridgeListId: string,
   deps: InboundPassDeps
 ): Promise<void> {
-  const { getTaskFn, closeTaskFn, todoistApiToken, dryrun } = deps;
+  const { getTaskFn: rawGetTaskFn, closeTaskFn: rawCloseTaskFn, todoistApiToken, dryrun, counter } = deps;
+
+  // Wrap Todoist calls with counter so they appear in the breakdown.
+  const getTaskFn: typeof rawGetTaskFn = counter
+    ? (id, tok) => { counter.incrementTodoist(); return rawGetTaskFn(id, tok); }
+    : rawGetTaskFn;
+  const closeTaskFn: typeof rawCloseTaskFn = counter
+    ? (id, tok) => { counter.incrementTodoist(); return rawCloseTaskFn(id, tok); }
+    : rawCloseTaskFn;
 
   console.log('[skylight-sync] inbound list poll: checking device-completed list items');
 
@@ -1203,6 +1921,23 @@ export interface InboundPassDeps {
    * Required for list-surface rows in the inbound pass.
    */
   bridgeListId?: string;
+  /**
+   * SubrequestCounter from the run context.
+   *
+   * When provided:
+   *   - Every getTaskFn / closeTaskFn / getTaskAfterCloseFn call increments
+   *     counter.incrementTodoist() so they appear in the breakdown.
+   *   - A per-row budget guard fires BEFORE processing each active mapping:
+   *     if counter.total + INBOUND_ROW_COST > budget, the remaining rows are
+   *     deferred (they will be re-checked idempotently on the next cron tick).
+   *   - The guard is conservative (INBOUND_ROW_COST per row) so that completions,
+   *     rolls, and other multi-subrequest actions within a single row still have
+   *     slack.
+   *
+   * When absent (unit tests that call runInboundPass directly), the counter and
+   * guard are both disabled — preserving backward compatibility.
+   */
+  counter?: SubrequestCounter;
 }
 
 export async function runInboundPass(
@@ -1212,20 +1947,66 @@ export async function runInboundPass(
   deps: InboundPassDeps
 ): Promise<void> {
   const {
-    getTaskFn,
-    closeTaskFn,
-    getTaskAfterCloseFn,
+    getTaskFn: rawGetTaskFn,
+    closeTaskFn: rawCloseTaskFn,
+    getTaskAfterCloseFn: rawGetTaskAfterCloseFn,
     todoistApiToken,
     dryrun,
     profileCategoryMap = {},
     timezone = 'America/New_York',
     bridgeListId,
+    counter,
   } = deps;
-  const fetchAfterClose = getTaskAfterCloseFn ?? getTaskFn;
+
+  // ── Counted Todoist wrappers ─────────────────────────────────────────────
+  // When a SubrequestCounter is provided, wrap each Todoist call so it increments
+  // the counter. This is the fix for Blocker #1: previously these calls went through
+  // the RAW functions which have NO counter instrumentation.
+  const getTaskFn: typeof rawGetTaskFn = counter
+    ? (id, tok) => { counter.incrementTodoist(); return rawGetTaskFn(id, tok); }
+    : rawGetTaskFn;
+  const closeTaskFn: typeof rawCloseTaskFn = counter
+    ? (id, tok) => { counter.incrementTodoist(); return rawCloseTaskFn(id, tok); }
+    : rawCloseTaskFn;
+  const rawFetchAfterClose = rawGetTaskAfterCloseFn ?? rawGetTaskFn;
+  const fetchAfterClose: typeof rawGetTaskFn = counter
+    ? (id, tok) => { counter.incrementTodoist(); return rawFetchAfterClose(id, tok); }
+    : rawFetchAfterClose;
+
   console.log('[skylight-sync] inbound pass: checking device completions');
 
   const activeMappings = await getActiveMappings(db);
   console.log(`[skylight-sync] inbound: ${activeMappings.length} active mappings`);
+
+  // ── Batched list GET for all active CHORE mappings (§ subrequest reduction) ──
+  // Collect all chore rows belonging to the running frame so we can verify
+  // them with ONE windowed list query instead of N individual getChoreById calls.
+  const choreRows = activeMappings.filter(
+    (r) => r.frame_id === frameId && r.surface === 'chore' && r.skylight_id && r.occurrence_date
+  );
+
+  let batchChoreMap: Map<string, import('./types.js').ChoreResource> = new Map();
+  // batchFetchSucceeded tracks whether the batch call completed without error.
+  // When true, absences from batchChoreMap are CONFIRMED 404s (device-deleted).
+  // When false (batch threw), fall back to per-id getChoreById.
+  let batchFetchSucceeded = false;
+  if (choreRows.length > 0) {
+    console.log(
+      `[skylight-sync] inbound: batched-fetch ${choreRows.length} chore mapping(s) with ONE list query`
+    );
+    try {
+      batchChoreMap = await client.batchFetchChoresByIds(
+        choreRows.map((r) => ({ id: r.skylight_id!, date: r.occurrence_date }))
+      );
+      batchFetchSucceeded = true;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[skylight-sync] inbound: batched-fetch error — falling back to per-id GETs: ${msg}`);
+      // batchFetchSucceeded stays false; per-row fallback below will use getChoreById
+    }
+  }
+
+  let inboundDeferred = 0;
 
   for (const row of activeMappings) {
     try {
@@ -1239,6 +2020,21 @@ export async function runInboundPass(
       }
 
       if (!row.skylight_id) continue;
+
+      // ── Per-row inbound budget guard ─────────────────────────────────────────
+      // Each active mapping costs at least INBOUND_ROW_COST subrequests (1 Todoist
+      // getTask + 1 D1 updateObservedStatus). Completions/rolls cost more but are
+      // rare and bounded by the guard reacting at each row boundary.
+      //
+      // CRITICAL: if budget is exhausted we DEFER (skip) the remaining rows — they
+      // will be re-checked idempotently on the next cron tick because inbound is
+      // stateless (it re-reads observed_status from Skylight each run).
+      // "Deferring" an inbound row means: no getTaskFn, no updateObservedStatus,
+      // no D1 write — zero subrequests for that row this run.
+      if (counter && !counter.canAfford(0, INBOUND_ROW_COST)) {
+        inboundDeferred++;
+        continue;
+      }
 
       // ── Phase 2c: list-surface rows — task gone check only ─────────────────
       // List item status updates are handled by runInboundListPoll (separate poll).
@@ -1256,8 +2052,18 @@ export async function runInboundPass(
         continue;
       }
 
-      // §7B: per-id read via list — never infer from list-absence
-      const observed = await client.getChoreById(row.skylight_id, row.occurrence_date);
+      // §7B: read from batched map first; fall back to per-id GET only on batch failure.
+      // When batchFetchSucceeded=true, a "miss" in batchChoreMap is a CONFIRMED absence
+      // from the date window — treat as 404 (device-deleted).
+      // When batchFetchSucceeded=false (batch threw), fall back to per-id getChoreById.
+      let observed: import('./types.js').ChoreResource | null;
+      if (batchFetchSucceeded) {
+        // Batch succeeded — use it. Absent chore = confirmed 404 = device-deleted.
+        observed = batchChoreMap.get(row.skylight_id) ?? null;
+      } else {
+        // Fallback: batch fetch failed or was not run — use individual getChoreById
+        observed = await client.getChoreById(row.skylight_id, row.occurrence_date);
+      }
 
       if (observed === null) {
         // Confirmed 404 — device-side delete (§8: drop mapping, no auto-recreate)
@@ -1287,8 +2093,12 @@ export async function runInboundPass(
 
       const observedStatus = observed.attributes.status;
 
-      // Update observed_status in D1
-      await updateObservedStatus(db, row.todoist_id, row.occurrence_date, observedStatus, dryrun);
+      // Update observed_status in D1 — only when the status actually changed.
+      // Skipping the write when unchanged saves 1 D1 subrequest per unchanged row,
+      // which is significant for large decks in steady state (all rows in-sync).
+      if (observedStatus !== row.observed_status) {
+        await updateObservedStatus(db, row.todoist_id, row.occurrence_date, observedStatus, dryrun);
+      }
 
       // Always fetch the current Todoist task by id — this captures Todoist-side completions
       // which are invisible to the open-task-list used in the outbound pass.
@@ -1463,6 +2273,13 @@ export async function runInboundPass(
       // Continue — idempotent resume
     }
   }
+
+  if (inboundDeferred > 0) {
+    console.log(
+      `[skylight-sync] inbound: deferred ${inboundDeferred} mapping(s) to next run ` +
+        `(subrequest budget: used ${counter?.total ?? 'n/a'} of ${counter?.budget ?? 'n/a'})`
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1483,19 +2300,54 @@ export default {
         `fingerprint="${expectedFingerprint}"`
     );
 
+    // ── Instrumentation: per-run subrequest counter ─────────────────────────
+    const counter = new SubrequestCounter(SUBREQUEST_BUDGET);
+
+    // ── Counted D1 + KV wrappers (count every subrequest-consuming call) ─────
+    const countedDb = makeCountedD1(env.DB, counter);
+    const countedKV = makeCountedKV(env.KV, counter);
+
     // ── Lease ──────────────────────────────────────────────────────────────
-    const leaseAcquired = await acquireLease(env.DB, runId);
+    // acquireLease makes 2 D1 calls (SELECT + INSERT/UPDATE); CountedD1 counts them.
+    const leaseAcquired = await acquireLease(countedDb, runId);
     if (!leaseAcquired) {
       console.log('[skylight-sync] another run is active — exiting (lease held)');
       return;
     }
 
     try {
-      // ── Skylight token ────────────────────────────────────────────────────
-      const token = await getSkylightToken(env);
+      // ── Skylight token (KV reads + optional PKCE auth) ────────────────────
+      // getSkylightToken makes 1-2 KV gets + possibly 5 PKCE fetch()s.
+      // Use a custom token-getter that uses countedKV so KV ops are tracked.
+      const tokenKvExpStr = await countedKV.get(KV_SKYLIGHT_TOKEN_EXP);
+      const tokenKvNow = Math.floor(Date.now() / 1000);
+      const tokenKvExp = tokenKvExpStr ? parseInt(tokenKvExpStr, 10) : 0;
+
+      let token: string;
+      if (tokenKvExp > tokenKvNow + 60) {
+        const cached = await countedKV.get(KV_SKYLIGHT_TOKEN);
+        if (cached) {
+          token = cached;
+        } else {
+          // Token expired — re-auth (5 PKCE fetch()s)
+          console.log('[skylight-sync] Skylight token missing — re-authenticating');
+          token = await pkceAuth(env.SKYLIGHT_EMAIL, env.SKYLIGHT_PASSWORD);
+          counter.incrementSkylight(5); // 5 PKCE HTTP steps
+          await countedKV.put(KV_SKYLIGHT_TOKEN, token, { expirationTtl: 3300 });
+          await countedKV.put(KV_SKYLIGHT_TOKEN_EXP, String(tokenKvNow + 3300));
+        }
+      } else {
+        // Token expired — re-auth (5 PKCE fetch()s)
+        console.log('[skylight-sync] Skylight token expired — re-authenticating');
+        token = await pkceAuth(env.SKYLIGHT_EMAIL, env.SKYLIGHT_PASSWORD);
+        counter.incrementSkylight(5); // 5 PKCE HTTP steps
+        await countedKV.put(KV_SKYLIGHT_TOKEN, token, { expirationTtl: 3300 });
+        await countedKV.put(KV_SKYLIGHT_TOKEN_EXP, String(tokenKvNow + 3300));
+      }
 
       // ── Frame fingerprint assert (§9) ─────────────────────────────────────
-      const client = new SkylightClient({ frameId, dryrun, token });
+      // CountedSkylightClient counts every HTTP call to Skylight.
+      const client = new CountedSkylightClient({ frameId, dryrun, token }, counter);
 
       if (expectedFingerprint) {
         try {
@@ -1525,10 +2377,11 @@ export default {
           if (err instanceof SkylightApiError && err.status === 401) {
             console.log('[skylight-sync] 401 — re-authenticating and retrying');
             const newToken = await pkceAuth(env.SKYLIGHT_EMAIL, env.SKYLIGHT_PASSWORD);
+            counter.incrementSkylight(5); // 5 PKCE HTTP steps for re-auth
             client.updateToken(newToken);
-            await env.KV.put(KV_SKYLIGHT_TOKEN, newToken, { expirationTtl: 3300 });
+            await countedKV.put(KV_SKYLIGHT_TOKEN, newToken, { expirationTtl: 3300 });
             const now = Math.floor(Date.now() / 1000);
-            await env.KV.put(KV_SKYLIGHT_TOKEN_EXP, String(now + 3300));
+            await countedKV.put(KV_SKYLIGHT_TOKEN_EXP, String(now + 3300));
             return await fn();
           }
           throw err;
@@ -1553,12 +2406,13 @@ export default {
       // Handles interrupted rolls where the prior run died after DELETE+verify but
       // before hardDeleteRow. The row is stuck in 'deleting' and invisible to the
       // normal active-row scans. This sweep resumes or hard-deletes them (major fix).
-      await runOrphanSweep(client, env.DB, frameId, dryrun);
+      await runOrphanSweep(client, countedDb, frameId, dryrun);
 
       // ── Phase 2c: ensure the dedicated bridge list exists ─────────────────
       let bridgeListId: string | undefined;
       try {
-        bridgeListId = await ensureFairPlayList(client, env.KV, dryrun);
+        // ensureFairPlayList uses countedKV (get + put) and possibly countedClient (getLists, createList)
+        bridgeListId = await ensureFairPlayList(client, countedKV, dryrun);
         console.log(`[skylight-sync] bridge list id: ${bridgeListId}`);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -1566,17 +2420,33 @@ export default {
         // Continue without list support — chore sync still works
       }
 
+      // ── Mapping cache: load ALL rows in ONE D1 SELECT ─────────────────────
+      // This replaces N per-task getMappingByTodoistId() D1 calls with a single
+      // SELECT, then serves lookups from the in-memory Map (0 D1 reads per task).
+      const mappingCache = new MappingCache();
+      await mappingCache.loadAll(countedDb);
+      // The loadAll SELECT counted 1 D1 call via CountedD1
+
+      const runCtx: RunContext = {
+        counter,
+        mappingCache,
+        rawDb: env.DB,
+      };
+
       // ── Outbound pass (per profile) ───────────────────────────────────────
       for (const profile of PROFILES) {
         const categoryId = profileCategoryMap[profile] ?? null;
         await withReauth(() =>
-          runOutboundPass(client, env.DB, env, frameId, profile, categoryId, timezone, bridgeListId)
+          runOutboundPass(client, countedDb, env, frameId, profile, categoryId, timezone, bridgeListId, runCtx)
         );
       }
 
       // ── Inbound pass ──────────────────────────────────────────────────────
+      // Pass the counter so the inbound pass:
+      //   (a) counts every getTaskFn/closeTaskFn call (Blocker #1 fix)
+      //   (b) enforces a per-row budget guard (Blocker #3 fix)
       await withReauth(() =>
-        runInboundPass(client, env.DB, frameId, {
+        runInboundPass(client, countedDb, frameId, {
           getTaskFn: getTask,
           closeTaskFn: closeTask,
           todoistApiToken: env.TODOIST_API_TOKEN,
@@ -1584,23 +2454,25 @@ export default {
           profileCategoryMap,
           timezone,
           bridgeListId,
+          counter,
         })
       );
 
       // ── Phase 2c: inbound list poll (device-completed list items → Todoist) ──
       if (bridgeListId) {
         await withReauth(() =>
-          runInboundListPoll(client, env.DB, frameId, bridgeListId!, {
+          runInboundListPoll(client, countedDb, frameId, bridgeListId!, {
             getTaskFn: getTask,
             closeTaskFn: closeTask,
             todoistApiToken: env.TODOIST_API_TOKEN,
             dryrun,
+            counter,
           })
         );
       }
 
       // ── Ops: log needs_review / detached counts ───────────────────────────
-      const reviewRows = await getReviewRows(env.DB);
+      const reviewRows = await getReviewRows(countedDb);
       if (reviewRows.length > 0) {
         console.warn(
           `[skylight-sync] ${reviewRows.length} row(s) need manual review: ` +
@@ -1608,8 +2480,12 @@ export default {
         );
       }
 
+      // ── Instrumentation: log subrequest breakdown on success ─────────────
+      console.log(`[skylight-sync] ${counter.breakdown()}`);
       console.log(`[skylight-sync] run ${runId} completed successfully`);
     } catch (err) {
+      // ── Instrumentation: log subrequest breakdown on failure ──────────────
+      console.log(`[skylight-sync] ${counter.breakdown()}`);
       if (err instanceof TodoistRateLimitError) {
         console.error('[skylight-sync] rate-limit checkpoint — run will resume on next cron tick');
       } else if (err instanceof FrameGuardError) {
@@ -1619,7 +2495,7 @@ export default {
         console.error(`[skylight-sync] run ${runId} failed: ${msg}`);
       }
     } finally {
-      await releaseLease(env.DB, runId);
+      await releaseLease(countedDb, runId);
       console.log(`[skylight-sync] lease released for run ${runId}`);
     }
   },

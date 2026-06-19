@@ -8,6 +8,10 @@
   "compatibility_date": "2024-09-23",
   "compatibility_flags": ["nodejs_compat"],
 
+  // Cron-only worker: no fetch handler, so no public HTTP endpoint is needed.
+  "workers_dev": false,
+  "preview_urls": false,
+
   // ── D1 database ──────────────────────────────────────────────────────────────
   // Apply schema (local dev):  npx wrangler d1 execute skylight-sync-db --local  --file=migrations/0001_init.sql
   // Apply schema (deployed):   npx wrangler d1 execute skylight-sync-db --remote --file=migrations/0001_init.sql
@@ -28,7 +32,7 @@
   ],
 
   // ── Cron trigger ─────────────────────────────────────────────────────────────
-  // Runs every 15 minutes. Adjust to taste.
+  // Runs every 15 minutes.
   "triggers": {
     "crons": ["*/15 * * * *"]
   },
@@ -45,21 +49,19 @@
   //   PROFILE_CATEGORY_MAP={"kyle":"20976592","amy":"20976818"}
   //   FRAME_TIMEZONE=America/New_York
   "vars": {
-    // DRYRUN='true' suppresses ALL non-GET writes to BOTH Skylight and Todoist.
-    // Set 'false' only after proving the worker on the test frame.
-    "DRYRUN": "true",
+    // PRODUCTION config for the DEPLOYED worker (real frame "heutoncal", live).
+    // Local `wrangler dev` overrides these via .dev.vars — keep .dev.vars pointed
+    // at the TEST frame (5381689) so local runs never double-write heutoncal.
+    "DRYRUN": "false",
 
-    // '5381689' = test frame "thehd"; '5356033' = real frame "heutoncal".
-    "FRAME": "5381689",
+    // '5356033' = real frame "heutoncal"; '5381689' = test frame "thehd".
+    "FRAME": "5356033",
 
-    // Must equal "<frameId>:<name>" to allow writes. Empty ('') = writes disabled.
-    //   test: 5381689:thehd   real: 5356033:heutoncal
-    "FRAME_CONFIRMED": "",
+    // Must equal "<frameId>:<name>" to allow writes.
+    "FRAME_CONFIRMED": "5356033:heutoncal",
 
-    // profile -> Skylight category id for this frame (from GET /categories):
-    //   test frame: {"kyle":"20976592","amy":"20976818"}
-    //   real frame: {"kyle":"21035874","amy":"20774318"}
-    "PROFILE_CATEGORY_MAP": "{}",
+    // profile -> Skylight category id on heutoncal (from GET /categories).
+    "PROFILE_CATEGORY_MAP": "{\"kyle\":\"21035874\",\"amy\":\"20774318\"}",
 
     "FRAME_TIMEZONE": "America/New_York"
   }
