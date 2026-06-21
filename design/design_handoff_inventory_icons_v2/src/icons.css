@@ -1,0 +1,34 @@
+/* ============================================================
+   icons.css — REQUIRED companion to the rich icon set.
+   ------------------------------------------------------------
+   The new glyphs are multi-color and tuned for a DARK backing.
+   These rules give every icon host a fixed dark "well" so the
+   color reads identically across the bone / eclipse / vapor
+   themes. Merge into src/styles/theme.css (or inventory.css).
+
+   Targets, with the in-app render size in each:
+     .ii-icon       supply-grid tile glyph        27 / 32 / 46px
+     .id-glyph      detail-panel glyph            32px
+     .rs-row .rg    restock-alert row glyph       19px
+     .icon-pick .ip icon-picker swatch            20px
+
+   Status is shown by the TILE (.inv-item.low / .inv-item.out),
+   never by the glyph — so these wells stay neutral.
+   ============================================================ */
+
+.ii-icon {
+  background: #16141F;
+  border: 1px solid rgba(255, 255, 255, .07);
+  border-radius: 4px;
+  padding: 8px;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .35), 0 1px 3px rgba(0, 0, 0, .3);
+}
+.ii-icon svg { filter: drop-shadow(0 2px 3px rgba(0, 0, 0, .45)); }
+
+.id-glyph     { background: #16141F; border-color: rgba(255, 255, 255, .08); }
+
+.rs-row .rg   { background: #16141F; border-color: rgba(255, 255, 255, .08); padding: 4px; }
+.rs-row.out .rg { border-color: var(--accent); }
+
+.icon-pick .ip      { background: #16141F; border-color: rgba(255, 255, 255, .08); padding: 3px; }
+.icon-pick .ip.on   { border-color: var(--accent-2); box-shadow: 0 0 0 1px var(--accent-2); }

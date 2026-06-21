@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>FairPlay · Inventory Icon Gallery (before / after harness)</title>
+<style>
+  /* Real FairPlay theme tokens — set on :root by the theme switcher below. */
+  :root {
+    --bg:#0F0F17; --surface:#171723; --surface-2:#1E1E2D; --surface-3:#262638;
+    --ink:#E9E7F4; --ink-2:rgba(233,231,244,.60); --ink-3:rgba(233,231,244,.38);
+    --ink-4:rgba(233,231,244,.20); --line:rgba(233,231,244,.14); --line-2:rgba(233,231,244,.07);
+    --accent:#FF3D8B; --accent-d:#FF6BA6; --accent-ink:#140810; --accent-2:#2FD8D8;
+    --grid:rgba(233,231,244,.05);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:"Space Grotesk",ui-sans-serif,system-ui,sans-serif;
+    background-image:
+      linear-gradient(var(--grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+    background-size:30px 30px;
+  }
+  .mono { font-family:"JetBrains Mono",ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace; }
+  header {
+    position:sticky; top:0; z-index:5; padding:16px 22px;
+    background:color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter:blur(8px); border-bottom:1px solid var(--line);
+    display:flex; align-items:center; gap:18px; flex-wrap:wrap;
+  }
+  .brand { font-weight:700; letter-spacing:.04em; font-size:15px; display:flex; align-items:center; gap:9px; }
+  .diamond { width:14px; height:14px; background:var(--accent); clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%); }
+  .sub { font-size:10px; letter-spacing:.12em; text-transform:uppercase; color:var(--ink-3); }
+  .controls { margin-left:auto; display:flex; gap:18px; align-items:center; flex-wrap:wrap; }
+  .seg { display:inline-flex; border:1px solid var(--line); }
+  .seg button {
+    background:transparent; color:var(--ink-2); border:0; border-left:1px solid var(--line);
+    padding:6px 11px; font-size:10px; letter-spacing:.1em; text-transform:uppercase; cursor:pointer;
+    font-family:inherit;
+  }
+  .seg button:first-child { border-left:0; }
+  .seg button.on { background:var(--ink); color:var(--bg); }
+  .ctl-label { font-size:9px; letter-spacing:.14em; text-transform:uppercase; color:var(--ink-3); margin-right:7px; }
+
+  main { padding:26px 22px 120px; max-width:1180px; margin:0 auto; }
+  .lede { color:var(--ink-2); font-size:13px; line-height:1.6; max-width:760px; margin:0 0 8px; }
+  .lede code { background:var(--surface-2); padding:1px 5px; border:1px solid var(--line-2); font-size:11.5px; }
+
+  .legend-row {
+    display:flex; gap:22px; align-items:center; margin:18px 0 26px;
+    font-size:9.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--ink-3);
+    border-top:1px solid var(--line-2); border-bottom:1px solid var(--line-2); padding:10px 0;
+    flex-wrap:wrap;
+  }
+
+  /* one row per icon key */
+  .icon-row {
+    display:grid; grid-template-columns:150px 1fr 1fr; gap:18px; align-items:center;
+    padding:16px 0; border-bottom:1px solid var(--line-2);
+  }
+  .icon-row.head { border-bottom:1px solid var(--line); padding-bottom:8px; }
+  .icon-row.head > div { font-size:9px; letter-spacing:.16em; text-transform:uppercase; color:var(--ink-3); }
+  .keycol .k { font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--ink); }
+  .keycol .l { font-size:10.5px; color:var(--ink-3); margin-top:3px; }
+
+  .swatches { display:flex; align-items:center; gap:18px; flex-wrap:wrap; }
+  .swatch { display:flex; flex-direction:column; align-items:center; gap:6px; }
+  .swatch .sz { font-family:"JetBrains Mono",monospace; font-size:8px; color:var(--ink-4); letter-spacing:.06em; }
+  /* the glyph host inherits color → currentColor, exactly like .ii-icon in the app */
+  .glyph { color:var(--ink-2); display:flex; align-items:center; justify-content:center; }
+  .glyph.active { color:var(--ink); }       /* hover / selected state */
+  .glyph.accent { color:var(--accent); }    /* "out" restock-row state */
+
+  /* in-situ grid tiles (mirror .inv-item) */
+  .tiles { display:flex; gap:14px; flex-wrap:wrap; margin-top:6px; }
+  .tile {
+    width:64px; height:64px; position:relative; display:flex; align-items:center; justify-content:center;
+    background:color-mix(in srgb, var(--surface-2) 90%, transparent); border:1px solid var(--line);
+  }
+  .tile .ii-icon { color:var(--ink-2); }
+  .tile.low { border-color:var(--accent); }
+  .tile.low::after { content:""; position:absolute; top:0; right:0; border-style:solid; border-width:0 9px 9px 0; border-color:transparent var(--accent) transparent transparent; }
+  .tile.out { border-color:var(--accent); background:repeating-linear-gradient(135deg, color-mix(in srgb, var(--accent) 11%, transparent) 0 5px, transparent 5px 10px); }
+  .tile.out::after { content:""; position:absolute; top:0; right:0; border-style:solid; border-width:0 9px 9px 0; border-color:transparent var(--accent) transparent transparent; }
+  .tile .tl { position:absolute; bottom:3px; right:5px; font-family:"JetBrains Mono",monospace; font-size:11px; color:var(--ink); }
+  .tile.low .tl, .tile.out .tl { color:var(--accent); }
+
+  section.context { margin-top:46px; }
+  section.context h2 { font-size:11px; letter-spacing:.18em; text-transform:uppercase; color:var(--ink-3); font-weight:600; }
+  .grid-demo { display:flex; gap:18px; flex-wrap:wrap; margin-top:16px; align-items:flex-start; }
+  .panel { border:1px solid var(--line); background:color-mix(in srgb,var(--surface) 70%,transparent); padding:14px; }
+  .panel .cap { font-size:9px; letter-spacing:.12em; text-transform:uppercase; color:var(--ink-3); margin-bottom:12px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><span class="diamond"></span> FAIRPLAY <span class="sub">· Inventory Icon Gallery</span></div>
+  <div class="controls">
+    <span>
+      <span class="ctl-label">Theme</span>
+      <span class="seg" id="theme">
+        <button data-theme="bone">Bone</button>
+        <button data-theme="eclipse">Eclipse</button>
+        <button data-theme="vapor" class="on">Vapor</button>
+      </span>
+    </span>
+    <span>
+      <span class="ctl-label">Color state</span>
+      <span class="seg" id="state">
+        <button data-state="rest" class="on">ink-2 (rest)</button>
+        <button data-state="active">ink (active)</button>
+        <button data-state="accent">accent (out)</button>
+      </span>
+    </span>
+  </div>
+</header>
+
+<main>
+  <p class="lede">
+    Every supply glyph rendered exactly as the app renders it — inline SVG inheriting
+    <code>currentColor</code>, at the real sizes (<strong>19 / 20 / 27 / 32 / 46&nbsp;px</strong>).
+    Left column is the <strong>current</strong> icon; right column is <strong>your draft</strong>.
+  </p>
+  <p class="lede">
+    To iterate: edit the <code>DRAFT</code> object near the bottom of this file — replace a key's
+    inner SVG markup, save, reload. The harness re-renders that key in every size, theme, and
+    status tile so you can judge legibility at 19&nbsp;px before touching the codebase.
+    <strong>Single color only</strong> — the glyph never carries status; the tile does.
+  </p>
+
+  <div class="legend-row">
+    <span>● 22 keys — must stay identical</span>
+    <span>● fill/stroke = currentColor</span>
+    <span>● 24×24 viewBox</span>
+    <span>● must read at 19px</span>
+    <span>● works in bone / eclipse / vapor</span>
+  </div>
+
+  <div class="icon-row head">
+    <div>KEY · LABEL</div>
+    <div>CURRENT</div>
+    <div>YOUR DRAFT (edit <code>DRAFT</code> below)</div>
+  </div>
+  <div id="rows"></div>
+
+  <section class="context">
+    <h2>In-situ — supply-grid tiles (64px cell · ok / low / out)</h2>
+    <div class="grid-demo" id="tiles-demo"></div>
+  </section>
+</main>
+
+<script>
+/* ── Real theme token sets (from src/styles/theme.css) ───────────────────── */
+const THEMES = {
+  bone: {
+    '--bg':'#E7E2D6','--surface':'#EFEBE1','--surface-2':'#DDD7C8','--surface-3':'#D1CAB8',
+    '--ink':'#1A1812','--ink-2':'rgba(26,24,18,.60)','--ink-3':'rgba(26,24,18,.36)','--ink-4':'rgba(26,24,18,.20)',
+    '--line':'rgba(26,24,18,.16)','--line-2':'rgba(26,24,18,.09)','--accent':'#EE3D17','--accent-d':'#C32E0E',
+    '--accent-ink':'#FCF7EE','--accent-2':'#0C857C','--grid':'rgba(26,24,18,.05)'
+  },
+  eclipse: {
+    '--bg':'#131210','--surface':'#1C1A16','--surface-2':'#24211B','--surface-3':'#2D2920',
+    '--ink':'#ECE6D8','--ink-2':'rgba(236,230,216,.60)','--ink-3':'rgba(236,230,216,.38)','--ink-4':'rgba(236,230,216,.20)',
+    '--line':'rgba(236,230,216,.14)','--line-2':'rgba(236,230,216,.07)','--accent':'#FF5A33','--accent-d':'#FF7A5A',
+    '--accent-ink':'#140C08','--accent-2':'#29C2B3','--grid':'rgba(236,230,216,.045)'
+  },
+  vapor: {
+    '--bg':'#0F0F17','--surface':'#171723','--surface-2':'#1E1E2D','--surface-3':'#262638',
+    '--ink':'#E9E7F4','--ink-2':'rgba(233,231,244,.60)','--ink-3':'rgba(233,231,244,.38)','--ink-4':'rgba(233,231,244,.20)',
+    '--line':'rgba(233,231,244,.14)','--line-2':'rgba(233,231,244,.07)','--accent':'#FF3D8B','--accent-d':'#FF6BA6',
+    '--accent-ink':'#140810','--accent-2':'#2FD8D8','--grid':'rgba(233,231,244,.05)'
+  }
+};
+
+/* Labels for each key (from src/shell/icons.tsx). */
+const LABELS = {
+  diaper:'Diaper', wipes:'Wipes', cream:'Cream / Ointment', trashbag:'Trash Bag',
+  compostbag:'Compost Bag', waterfilter:'Water Filter', tablets:'Tablets (Motrin)',
+  capsules:'Capsules (Tylenol)', blister:'Blister Pack (Zyrtec)', drops:'Drops (Probiotic)',
+  formula:'Formula Canister', shampoo:'Pump Bottle (Shampoo)', conditioner:'Squeeze Bottle (Conditioner)',
+  cradlecap:'Cradle Cap (Jar + Comb)', sunscreen:'Sunscreen', tp:'Toilet Paper',
+  papertowel:'Paper Towel', ziplock:'Zip Bags', plasticwrap:'Plastic Wrap',
+  foil:'Aluminum Foil', parchment:'Parchment Paper', generic:'Generic Supply'
+};
+
+/* ── CURRENT icons — frozen reference (do NOT edit; mirrors src/shell/icons.tsx) ── */
+const CURRENT = {
+  diaper:`<path d="M4 7 H20 V10.5 C20 16.5 16.5 20 12 20 C7.5 20 4 16.5 4 10.5 Z"/><path d="M4 10.5 H20" opacity=".5"/><path d="M7 7 V4.8 H10 V7 M14 7 V4.8 H17 V7" opacity=".5"/>`,
+  wipes:`<rect x="4" y="10" width="16" height="9"/><path d="M4 13 H20" opacity=".5"/><path d="M11 10 C11 7.2 14 7.6 14 4.6"/>`,
+  cream:`<rect x="10" y="4" width="4" height="2.6"/><path d="M9.5 8.2 H14.5 L16.2 19.5 H7.8 Z"/><path d="M12 12.2 V15.8 M10.2 14 H13.8" opacity=".6"/>`,
+  trashbag:`<path d="M7.5 8.8 C7.5 7.2 9.5 6.6 12 6.6 C14.5 6.6 16.5 7.2 16.5 8.8 L18 20 H6 Z"/><path d="M9.6 6.8 L8.2 3.8 M14.4 6.8 L15.8 3.8"/>`,
+  compostbag:`<path d="M8 9.4 C8 8 9.8 7.5 12 7.5 C14.2 7.5 16 8 16 9.4 L17.2 20 H6.8 Z"/><path d="M10.2 7.6 L9.2 5.2 M13.8 7.6 L14.8 5.2"/><path d="M12 11.6 C14.8 11.6 15.4 13.8 15.4 15.8 C12.6 15.8 12 13.6 12 11.6 Z" opacity=".7"/><path d="M13 13.2 C11.8 14.6 11 15.8 10.2 17.4" opacity=".7"/>`,
+  waterfilter:`<path d="M7 5 H17.5 L16.2 20 H8.3 Z"/><path d="M17.3 7.2 C20.4 7.6 20 12 16.7 12.2"/><path d="M8.4 13 H16" opacity=".5"/><path d="M12 7.4 C13.1 8.8 13.1 10 12 10 C10.9 10 10.9 8.8 12 7.4 Z" opacity=".7"/>`,
+  tablets:`<rect x="8" y="4.6" width="8" height="2.8"/><rect x="8.8" y="7.4" width="6.4" height="12.2"/><path d="M8.8 10.4 H15.2" opacity=".5"/><circle cx="12" cy="14.6" r="2.1"/><path d="M9.9 14.6 H14.1"/>`,
+  capsules:`<rect x="8" y="4.6" width="8" height="2.8"/><rect x="8.8" y="7.4" width="6.4" height="12.2"/><path d="M8.8 10.4 H15.2" opacity=".5"/><rect x="9.6" y="13.4" width="4.8" height="2.6" rx="1.3"/><path d="M12 13.4 V16"/>`,
+  blister:`<rect x="5" y="7.4" width="14" height="11.2"/><circle cx="8.8" cy="11" r="1.5"/><circle cx="15.2" cy="11" r="1.5"/><circle cx="8.8" cy="15" r="1.5"/><circle cx="15.2" cy="15" r="1.5"/><path d="M12 7.4 V18.6" opacity=".5" stroke-dasharray="1.6 1.6"/>`,
+  drops:`<circle cx="12" cy="4.6" r="1.7"/><rect x="10.9" y="6.3" width="2.2" height="2.2"/><path d="M8.5 10.4 L10.4 8.5 H13.6 L15.5 10.4 V19.6 H8.5 Z"/><path d="M12 8.5 V15.4" opacity=".5"/>`,
+  formula:`<rect x="4.6" y="5" width="12.4" height="2.6"/><rect x="5.4" y="7.6" width="10.8" height="12.4"/><path d="M5.4 11 H16.2 M5.4 16 H16.2" opacity=".4"/><circle cx="19.4" cy="17.4" r="2"/><path d="M19.4 15.4 V11.6"/>`,
+  shampoo:`<rect x="8" y="10" width="8" height="10"/><rect x="11.2" y="8" width="1.6" height="2"/><path d="M12 8 V5.4"/><rect x="11.2" y="3.6" width="4.6" height="1.8"/><path d="M8 13.4 H16" opacity=".4"/>`,
+  conditioner:`<path d="M8 4 H16 V13.8 L14.4 16.4 H9.6 L8 13.8 Z"/><rect x="10" y="16.4" width="4" height="3.4"/><path d="M8 8 H16" opacity=".4"/>`,
+  cradlecap:`<path d="M8 4.4 H16"/><path d="M9.6 4.4 V7.2 M12 4.4 V7.2 M14.4 4.4 V7.2"/><rect x="6.4" y="9.4" width="11.2" height="2.2"/><rect x="7.2" y="11.6" width="9.6" height="8"/>`,
+  sunscreen:`<circle cx="12" cy="5.2" r="1.9"/><path d="M7.4 5.2 H8.8 M15.2 5.2 H16.6 M12 1.8 V2.6"/><rect x="10.6" y="9.4" width="2.8" height="1.8"/><path d="M8 11.2 H16 V20 H8 Z"/><path d="M8 15 H16" opacity=".4"/>`,
+  tp:`<circle cx="11.5" cy="9.8" r="5.6"/><circle cx="11.5" cy="9.8" r="1.8" opacity=".6"/><path d="M17.1 9.8 V18.6 H13"/>`,
+  papertowel:`<ellipse cx="12" cy="6.4" rx="5" ry="1.9"/><ellipse cx="12" cy="6.4" rx="1.6" ry=".7" opacity=".6"/><path d="M7 6.4 V18 C7 19.4 17 19.4 17 18 V6.4"/>`,
+  ziplock:`<rect x="6" y="6.4" width="12" height="13.2"/><path d="M6 9.6 H18"/><path d="M6 10.8 H18" opacity=".4"/><rect x="10.8" y="8.2" width="2.4" height="2.8"/>`,
+  plasticwrap:`<rect x="4.5" y="12.6" width="15" height="5.8"/><circle cx="7" cy="15.5" r="1.1" opacity=".5"/><path d="M10 12.6 C10 9 14 10.4 14 6.4"/>`,
+  foil:`<rect x="4.5" y="12.6" width="15" height="5.8"/><circle cx="7" cy="15.5" r="1.1" opacity=".5"/><path d="M9.5 12.6 V9 L11.3 10.6 L13.1 9 L14.9 10.6 L16.7 9 V12.6"/>`,
+  parchment:`<rect x="4.5" y="12.6" width="15" height="5.8"/><circle cx="8.4" cy="9.4" r="2"/><path d="M10.4 9.4 H16.6 V12.6"/>`,
+  generic:`<rect x="5" y="5" width="14" height="14"/><path d="M5 12 H19 M12 5 V19" opacity=".4"/>`
+};
+
+/* ════════════════════════════════════════════════════════════════════════
+   DRAFT — EDIT THIS. Replace a key's inner SVG markup with your new design.
+   Starts as a copy of CURRENT. Keep the 22 keys; keep the 24×24 viewBox.
+   For filled (emblem) shapes set fill="currentColor" on the filled element;
+   stroke + stroke-width 1.4 are inherited from the wrapper (override per element
+   with stroke="none" when a shape is a solid fill).
+   ════════════════════════════════════════════════════════════════════════ */
+const DRAFT = Object.assign({}, CURRENT);
+// Example of how a redesigned key would look (uncomment + tweak):
+// DRAFT.diaper = `<path fill="currentColor" stroke="none" d="M3 6 H21 L19.5 11 C18.5 17 15 20 12 20 C9 20 5.5 17 4.5 11 Z"/>`;
+
+/* ── Render machinery — mirrors makeIcon() in src/shell/icons.tsx ─────────── */
+const SIZES = [46, 32, 27, 20, 19];
+function svg(inner, size) {
+  return `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none"
+    stroke="currentColor" stroke-width="1.4" stroke-linecap="square" stroke-linejoin="miter"
+    style="display:block">${inner}</svg>`;
+}
+let stateClass = 'rest';
+const STATE_CLASS = { rest:'', active:'active', accent:'accent' };
+
+function swatchSet(inner) {
+  return `<div class="swatches">` + SIZES.map(s =>
+    `<div class="swatch"><span class="glyph ${STATE_CLASS[stateClass]}">${svg(inner, s)}</span><span class="sz">${s}px</span></div>`
+  ).join('') + `</div>`;
+}
+
+function renderRows() {
+  const rows = document.getElementById('rows');
+  rows.innerHTML = Object.keys(CURRENT).map(key => `
+    <div class="icon-row">
+      <div class="keycol"><div class="k">${key}</div><div class="l">${LABELS[key] || ''}</div></div>
+      <div>${swatchSet(CURRENT[key])}</div>
+      <div>${swatchSet(DRAFT[key])}</div>
+    </div>`).join('');
+}
+
+function renderTiles() {
+  const demo = document.getElementById('tiles-demo');
+  // Show a handful of keys in the 64px tile in each status, current vs draft.
+  const sample = ['diaper','wipes','formula','tablets','tp','generic'];
+  function tileBlock(set, cap) {
+    return `<div class="panel"><div class="cap">${cap}</div><div class="tiles">` +
+      sample.map((k,i) => {
+        const st = ['','low','out'][i % 3];
+        const count = ['12','3','0'][i % 3];
+        return `<div class="tile ${st}"><span class="ii-icon">${svg(set[k], 46)}</span><span class="tl">${count}</span></div>`;
+      }).join('') + `</div></div>`;
+  }
+  demo.innerHTML = tileBlock(CURRENT, 'Current') + tileBlock(DRAFT, 'Your draft');
+}
+
+function applyTheme(name) {
+  const t = THEMES[name];
+  for (const k in t) document.documentElement.style.setProperty(k, t[k]);
+}
+
+/* ── Wiring ──────────────────────────────────────────────────────────────── */
+document.getElementById('theme').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  [...e.currentTarget.children].forEach(x => x.classList.toggle('on', x === b));
+  applyTheme(b.dataset.theme);
+});
+document.getElementById('state').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  [...e.currentTarget.children].forEach(x => x.classList.toggle('on', x === b));
+  stateClass = b.dataset.state;
+  renderRows();
+});
+
+applyTheme('vapor');
+renderRows();
+renderTiles();
+</script>
+</body>
+</html>

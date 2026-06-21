@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>FairPlay · Supply Brand System / Rich</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;500;700&family=Archivo:wght@600;700;800;900&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0A090E; --ink:#ECEAF6; --ink-2:rgba(236,234,246,.55); --ink-3:rgba(236,234,246,.34);
+    --line:rgba(236,234,246,.12); --line-2:rgba(236,234,246,.06); --grid:rgba(236,234,246,.045);
+    --stage:#161420; --stage-2:#100E18;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;}
+  body{
+    background:var(--bg); color:var(--ink);
+    font-family:"Space Grotesk",system-ui,sans-serif;
+    background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+    background-size:34px 34px;
+  }
+  .mono{font-family:"JetBrains Mono",ui-monospace,monospace;}
+
+  header{
+    position:sticky; top:0; z-index:10; padding:16px 30px;
+    background:color-mix(in srgb,var(--bg) 84%,transparent); backdrop-filter:blur(10px);
+    border-bottom:1px solid var(--line); display:flex; align-items:center; gap:16px; flex-wrap:wrap;
+  }
+  .brand{font-weight:700; letter-spacing:.05em; font-size:15px; display:flex; align-items:center; gap:11px;}
+  .diamond{width:15px; height:15px; background:#FF3D8B; clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%);}
+  .brand .sub{font-size:10px; letter-spacing:.14em; text-transform:uppercase; color:var(--ink-3); font-weight:400;}
+  .controls{margin-left:auto; display:flex; gap:18px; align-items:center; flex-wrap:wrap;}
+  .ctl-label{font-size:9px; letter-spacing:.15em; text-transform:uppercase; color:var(--ink-3); margin-right:8px;}
+  .seg{display:inline-flex; border:1px solid var(--line);}
+  .seg button{background:transparent; color:var(--ink-2); border:0; border-left:1px solid var(--line);
+    padding:7px 13px; font-size:10px; letter-spacing:.1em; text-transform:uppercase; cursor:pointer; font-family:"JetBrains Mono",monospace;}
+  .seg button:first-child{border-left:0;}
+  .seg button.on{background:var(--ink); color:var(--bg);}
+
+  main{padding:34px 30px 130px; max-width:1320px; margin:0 auto;}
+  .lede{color:var(--ink-2); font-size:14px; line-height:1.65; max-width:840px; margin:0 0 26px;}
+  .lede b{color:var(--ink); font-weight:500;}
+  .lede em{font-style:normal; color:#FF6BA6;}
+
+  .hero{display:grid; grid-template-columns:repeat(3,1fr); gap:18px; margin-bottom:14px;}
+  @media(max-width:880px){ .hero{grid-template-columns:1fr;} }
+
+  .cat-head{display:flex; align-items:center; gap:14px; margin:46px 0 4px;
+    font-size:11px; letter-spacing:.22em; text-transform:uppercase; color:var(--ink-3); font-weight:500;}
+  .cat-head .chip{display:inline-flex; align-items:center; gap:8px; padding:5px 11px; border:1px solid var(--line); font-family:"JetBrains Mono",monospace; letter-spacing:.12em; font-size:9.5px;}
+  .cat-head .chip .sw{width:10px; height:10px;}
+  .cat-head .ln{flex:1; height:1px; background:var(--line-2);}
+  .cat-head .ct{font-family:"JetBrains Mono",monospace; font-size:9.5px; color:var(--ink-3);}
+
+  .grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(208px,1fr)); gap:18px; margin-top:18px;}
+
+  /* ── badge: brand color in frame/header, dark stage ── */
+  .badge{
+    position:relative; --field:#444; --deep:#222; --acc:#fff;
+    background:var(--stage); overflow:hidden;
+    border:1px solid color-mix(in srgb, var(--field) 55%, transparent);
+    clip-path:polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 0 100%);
+    display:flex; flex-direction:column; transition:transform .15s ease, box-shadow .15s ease;
+  }
+  .badge:hover{transform:translateY(-3px); box-shadow:0 10px 30px rgba(0,0,0,.5);}
+
+  /* brand header band */
+  .b-head{position:relative; background:var(--field); color:#fff; padding:8px 13px; display:flex; align-items:center; justify-content:space-between; gap:8px;
+    clip-path:polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 0 100%);}
+  .b-head::after{content:""; position:absolute; inset:0; opacity:.16; pointer-events:none;
+    background-image:radial-gradient(rgba(0,0,0,.85) 1px,transparent 1.3px); background-size:6px 6px;}
+  .sigwrap{display:flex; align-items:center; gap:8px; position:relative; z-index:1;}
+  .sigil{width:17px; height:17px; display:block; color:rgba(255,255,255,.92);}
+  .wm{font-family:"Archivo",sans-serif; font-weight:800; font-size:8.5px; letter-spacing:.05em; line-height:1.05; text-transform:uppercase; max-width:84px; color:rgba(255,255,255,.96);}
+  .code{position:relative; z-index:1; font-family:"JetBrains Mono",monospace; font-size:8.5px; letter-spacing:.04em; text-align:right; color:rgba(255,255,255,.82);}
+  .code .lot{display:block; color:rgba(0,0,0,.4); margin-top:2px; letter-spacing:.16em;}
+
+  /* object stage */
+  .b-art{position:relative; flex:1; display:flex; align-items:center; justify-content:center; min-height:128px; padding:14px 0;
+    background:
+      radial-gradient(120% 90% at 50% 38%, color-mix(in srgb, var(--field) 24%, transparent), transparent 62%),
+      linear-gradient(var(--stage-2), var(--stage));}
+  .hero .b-art{min-height:160px;}
+  .b-art::before{content:""; position:absolute; inset:0; pointer-events:none; opacity:.5;
+    background-image:linear-gradient(var(--line-2) 1px,transparent 1px),linear-gradient(90deg,var(--line-2) 1px,transparent 1px);
+    background-size:18px 18px;}
+  .b-art svg{display:block; position:relative; filter:drop-shadow(0 6px 10px rgba(0,0,0,.45));}
+
+  /* footer */
+  .b-foot{position:relative; padding:12px 14px 14px; border-top:1px solid var(--line-2);}
+  .accentbar{height:4px; width:100%; background:var(--acc); margin-bottom:9px; clip-path:polygon(0 0,100% 0,100% 100%, 6px 100%);}
+  .b-name{font-family:"Archivo",sans-serif; font-weight:800; font-size:15px; letter-spacing:-.01em; line-height:1.02; color:var(--ink); text-transform:uppercase;}
+  .hero .b-name{font-size:21px;}
+  .b-meta{display:flex; align-items:center; justify-content:space-between; margin-top:8px;}
+  .tag{font-family:"JetBrains Mono",monospace; font-size:8.5px; letter-spacing:.1em; padding:3px 7px; color:#fff; background:color-mix(in srgb,var(--field) 70%, #000);}
+  .barcode{display:flex; gap:1.5px; align-items:flex-end; height:13px;}
+  .barcode i{width:1.5px; background:var(--ink-3); display:block;}
+
+  .footer-note{margin-top:60px; padding-top:18px; border-top:1px solid var(--line-2); color:var(--ink-3); font-size:11px; line-height:1.7; max-width:780px;}
+  .footer-note .mono{color:var(--ink-2);}
+
+  /* object-only mode */
+  body.clean .b-head, body.clean .b-foot .b-meta, body.clean .badge{border:0;}
+  body.clean .b-foot{padding-top:10px;}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><span class="diamond"></span> FAIRPLAY <span class="sub">· Supply Brand System / Rich Icons</span></div>
+  <div class="controls">
+    <span><span class="ctl-label">Stage</span>
+      <span class="seg" id="bgseg">
+        <button data-bg="dark" class="on">Dark</button>
+        <button data-bg="bone">Bone</button>
+      </span>
+    </span>
+    <span><span class="ctl-label">Chrome</span>
+      <span class="seg" id="chromeseg">
+        <button data-chrome="full" class="on">Full brand</button>
+        <button data-chrome="clean">Object only</button>
+      </span>
+    </span>
+  </div>
+</header>
+
+<main>
+  <p class="lede">
+    Round two — the objects are now <b>detailed multi-color illustrations</b>: real material color, caps and
+    pumps, labels, a highlight sheen and a shadow plane for dimension. The <em>faction color identity</em> you
+    liked now lives in the <b>badge frame + header band</b>, and the object sits on a dark stage so the color
+    reads. Still one badge per SKU, still object-first.
+  </p>
+
+  <div class="hero" id="hero"></div>
+  <div id="cats"></div>
+
+  <div class="footer-note">
+    <span class="mono">SYSTEM —</span> seven sub-brands map to the seven supply categories; each object is a
+    self-contained colored vector (no shared tint with the field, so it stays legible on the inventory grid).
+    Toggle <span class="mono">Object only</span> to see the raw icons, or <span class="mono">Bone</span> to
+    preview the stage against the light theme.
+  </div>
+</main>
+
+<script src="icons-rich.js"></script>
+<script>
+const BRANDS = {
+  Kitchen:    { field:"#C75D34", deep:"#974226", acc:"#F2C14E", wm:"AURIC PROVISIONS", tag:"PROV", pre:"AUR", sig:"chev" },
+  Paper:      { field:"#3D6E8E", deep:"#2A5069", acc:"#9FD0E8", wm:"PALLAS PAPER DIV", tag:"PAPR", pre:"PAL", sig:"bars" },
+  Bath:       { field:"#1E9B8E", deep:"#13726A", acc:"#7BE3D2", wm:"QIREX HYGIENE", tag:"HYGN", pre:"QRX", sig:"rings" },
+  Cleaning:   { field:"#2E9E5B", deep:"#1F7242", acc:"#8FE6A8", wm:"VECTRA CLEAN SYS", tag:"CLN", pre:"VEC", sig:"arrow" },
+  Pharmacy:   { field:"#C5322F", deep:"#921F1D", acc:"#F2A6A0", wm:"AXIOM MED", tag:"MED", pre:"AXM", sig:"cross" },
+  Caregiving: { field:"#CE3D78", deep:"#9C2856", acc:"#F7A8CA", wm:"NOVA CARE", tag:"CARE", pre:"NVA", sig:"diamond" },
+  Office:     { field:"#C39A22", deep:"#937314", acc:"#F0DA86", wm:"MERIDIAN BUREAU", tag:"DOC", pre:"MER", sig:"grid" },
+};
+const CAT_ORDER = ["Kitchen","Paper","Bath","Cleaning","Pharmacy","Caregiving","Office"];
+const SIZE_TAG = { ziploc_gal:"GAL", ziploc_qt:"QT", ziploc_sand:"SND" };
+
+const SIGILS = {
+  chev:  `<path d="M3 8 L9.5 3.5 L16 8 M3 13 L9.5 8.5 L16 13" fill="none" stroke="currentColor" stroke-width="1.7"/>`,
+  bars:  `<rect x="4" y="3.5" width="2.4" height="12" fill="currentColor"/><rect x="8.3" y="3.5" width="2.4" height="12" fill="currentColor"/><rect x="12.6" y="3.5" width="2.4" height="12" fill="currentColor"/>`,
+  rings: `<circle cx="9.5" cy="9.5" r="6.5" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="9.5" cy="9.5" r="2.6" fill="currentColor"/>`,
+  arrow: `<path d="M3 9.5 H13 M9 5.5 L13.5 9.5 L9 13.5" fill="none" stroke="currentColor" stroke-width="1.7"/>`,
+  cross: `<path d="M7.6 3.5 H11.4 V7.6 H15.5 V11.4 H11.4 V15.5 H7.6 V11.4 H3.5 V7.6 H7.6 Z" fill="currentColor"/>`,
+  diamond:`<path d="M9.5 2.5 L16.5 9.5 L9.5 16.5 L2.5 9.5 Z" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M9.5 6.5 L12.5 9.5 L9.5 12.5 L6.5 9.5 Z" fill="currentColor"/>`,
+  grid:  `<rect x="3.5" y="3.5" width="5" height="5" fill="currentColor"/><rect x="10.5" y="3.5" width="5" height="5" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="3.5" y="10.5" width="5" height="5" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="10.5" y="10.5" width="5" height="5" fill="currentColor"/>`,
+};
+
+function svg(inner,size){
+  return `<svg viewBox="0 0 24 24" width="${size}" height="${size}">${inner}</svg>`;
+}
+
+let counters = {};
+function badgeHTML(key, hero){
+  const it = RICH_ICONS[key];
+  const b = BRANDS[it.cat] || BRANDS.Kitchen;
+  counters[it.cat] = (counters[it.cat]||0)+1;
+  const num = String(counters[it.cat]).padStart(2,"0");
+  const code = `${b.pre}-${num}`;
+  const lot = "LOT 7\u0394" + (10+counters[it.cat]);
+  let seed = 0; for(let i=0;i<key.length;i++) seed = (seed*31 + key.charCodeAt(i)) & 0xffff;
+  const bars = Array.from({length:11},()=>{ seed=(seed*1103515245+12345)&0x7fffffff; return `<i style="height:${6+(seed%8)}px"></i>`; }).join("");
+  const tag = (SIZE_TAG[key] ? SIZE_TAG[key] : b.tag) + " \u00b7 " + b.pre;
+  const sz = hero ? 104 : 84;
+  return `<div class="badge ${hero?'':''}" style="--field:${b.field};--deep:${b.deep};--acc:${b.acc}">
+    <div class="b-head">
+      <div class="sigwrap"><svg class="sigil" viewBox="0 0 19 19">${SIGILS[b.sig]}</svg><div class="wm">${b.wm}</div></div>
+      <div class="code">${code}<span class="lot">${lot}</span></div>
+    </div>
+    <div class="b-art">${svg(it.svg, sz)}</div>
+    <div class="b-foot">
+      <div class="accentbar"></div>
+      <div class="b-name">${it.label}</div>
+      <div class="b-meta"><span class="tag">${tag}</span><span class="barcode">${bars}</span></div>
+    </div>
+  </div>`;
+}
+
+function render(){
+  counters = {};
+  const byCat = {};
+  for(const k of RICH_ORDER){ const c = RICH_ICONS[k].cat; (byCat[c]=byCat[c]||[]).push(k); }
+
+  document.getElementById('hero').innerHTML = ['dawn','diaper','sunscreen'].map(k=>badgeHTML(k,true)).join('');
+  counters = {};
+
+  const cats = CAT_ORDER.filter(c=>byCat[c]).concat(Object.keys(byCat).filter(c=>!CAT_ORDER.includes(c)));
+  document.getElementById('cats').innerHTML = cats.map(cat=>{
+    const b = BRANDS[cat];
+    const cards = byCat[cat].map(k=>badgeHTML(k,false)).join('');
+    return `<div class="cat-head">
+        <span class="chip"><span class="sw" style="background:${b.field}"></span>${b.wm}</span>
+        <span style="color:var(--ink-3)">${cat}</span>
+        <span class="ln"></span><span class="ct">${byCat[cat].length} SKU</span>
+      </div><div class="grid">${cards}</div>`;
+  }).join('');
+}
+
+document.getElementById('bgseg').addEventListener('click',e=>{
+  const btn=e.target.closest('button'); if(!btn) return;
+  [...e.currentTarget.children].forEach(x=>x.classList.toggle('on',x===btn));
+  const r=document.documentElement.style;
+  if(btn.dataset.bg==='bone'){
+    r.setProperty('--bg','#E7E2D6'); r.setProperty('--ink','#1A1812'); r.setProperty('--ink-2','rgba(26,24,18,.6)');
+    r.setProperty('--ink-3','rgba(26,24,18,.4)'); r.setProperty('--line','rgba(26,24,18,.16)');
+    r.setProperty('--line-2','rgba(26,24,18,.09)'); r.setProperty('--grid','rgba(26,24,18,.05)');
+    r.setProperty('--stage','#EFEBE1'); r.setProperty('--stage-2','#E2DCCE');
+  } else {
+    r.setProperty('--bg','#0A090E'); r.setProperty('--ink','#ECEAF6'); r.setProperty('--ink-2','rgba(236,234,246,.55)');
+    r.setProperty('--ink-3','rgba(236,234,246,.34)'); r.setProperty('--line','rgba(236,234,246,.12)');
+    r.setProperty('--line-2','rgba(236,234,246,.06)'); r.setProperty('--grid','rgba(236,234,246,.045)');
+    r.setProperty('--stage','#161420'); r.setProperty('--stage-2','#100E18');
+  }
+});
+document.getElementById('chromeseg').addEventListener('click',e=>{
+  const btn=e.target.closest('button'); if(!btn) return;
+  [...e.currentTarget.children].forEach(x=>x.classList.toggle('on',x===btn));
+  document.body.classList.toggle('clean', btn.dataset.chrome==='clean');
+});
+
+render();
+</script>
+</body>
+</html>

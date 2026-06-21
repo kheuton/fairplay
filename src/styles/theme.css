@@ -79,6 +79,12 @@ body { background: #0a0a0a; font-family: "Space Grotesk", system-ui, sans-serif;
   /* Success / "complete" color — used by the mobile swipe-to-complete bar.
      Aliased to --accent-2 so it resolves per-theme automatically. */
   --ok: var(--accent-2);
+  /* Icon "well" — fixed dark backing for the rich multi-color supply glyphs.
+     Intentionally NOT theme-scoped: the illustrations are tuned for a dark
+     stage, so the well stays dark in bone/eclipse/vapor alike and the color
+     reads identically across all three themes. */
+  --icon-well: #16141F;
+  --icon-well-line: rgba(255, 255, 255, .08);
   position: fixed; inset: 0;
   display: flex; flex-direction: column;
   background: var(--bg); color: var(--ink);
@@ -411,8 +417,18 @@ button.chk {
 .inv-item:hover { border-color: var(--ink-2); z-index: 6; }
 .inv-item.dragging { z-index: 30; opacity: .92; cursor: grabbing; box-shadow: 0 10px 26px rgba(0,0,0,.28); }
 .inv-item.sel { border-color: var(--accent-2); box-shadow: 0 0 0 1px var(--accent-2); z-index: 5; }
-.ii-icon { color: var(--ink-2); display: flex; pointer-events: none; }
-.inv-item:hover .ii-icon, .inv-item.sel .ii-icon { color: var(--ink); }
+/* Rich glyphs are multi-color and sit on a fixed dark well. Status is shown by
+   the tile (.inv-item.low / .inv-item.out), never the glyph — so the old
+   currentColor + hover/selected color rules are gone (they'd be no-ops now). */
+.ii-icon {
+  display: flex; pointer-events: none;
+  background: var(--icon-well);
+  border: 1px solid var(--icon-well-line);
+  border-radius: 4px;
+  padding: 8px;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .35), 0 1px 3px rgba(0, 0, 0, .3);
+}
+.ii-icon svg { filter: drop-shadow(0 2px 3px rgba(0, 0, 0, .45)); }
 
 .ii-count { position: absolute; right: 5px; bottom: 3px; font-size: 11px; color: var(--ink); pointer-events: none; }
 .ii-stack { color: var(--ink-4); font-size: 8.5px; }
@@ -460,7 +476,7 @@ button.chk {
 /* detail / config panel */
 .inv-detail { padding: 18px 22px 24px; overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 18px; scrollbar-width: thin; scrollbar-color: var(--ink-4) transparent; }
 .id-head { display: flex; gap: 13px; align-items: center; }
-.id-glyph { width: 54px; height: 54px; border: 1px solid var(--line); display: flex; align-items: center; justify-content: center; color: var(--ink); background: var(--surface-2); flex: 0 0 54px; }
+.id-glyph { width: 54px; height: 54px; border: 1px solid var(--icon-well-line); display: flex; align-items: center; justify-content: center; background: var(--icon-well); flex: 0 0 54px; }
 .id-name { font-size: 16.5px; font-weight: 600; line-height: 1.15; }
 .id-x { margin-left: auto; cursor: pointer; color: var(--ink-3); font-size: 13px; border: 1px solid var(--line); width: 26px; height: 26px; flex: 0 0 26px; display: flex; align-items: center; justify-content: center; align-self: flex-start; }
 .id-x:hover { color: var(--ink); border-color: var(--ink-3); }
@@ -481,15 +497,15 @@ button.chk {
 .seg.mini > button { padding: 5px 8px; font-size: 9px; }
 
 .icon-pick { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; }
-.icon-pick .ip { aspect-ratio: 1; border: 1px solid var(--line); display: flex; align-items: center; justify-content: center; cursor: pointer; color: var(--ink-3); background: var(--surface-2); }
-.icon-pick .ip:hover { color: var(--ink); border-color: var(--ink-3); }
-.icon-pick .ip.on { border-color: var(--accent-2); color: var(--ink); box-shadow: 0 0 0 1px var(--accent-2); }
+.icon-pick .ip { aspect-ratio: 1; border: 1px solid var(--icon-well-line); display: flex; align-items: center; justify-content: center; cursor: pointer; background: var(--icon-well); padding: 3px; }
+.icon-pick .ip:hover { border-color: var(--ink-3); }
+.icon-pick .ip.on { border-color: var(--accent-2); box-shadow: 0 0 0 1px var(--accent-2); }
 
 /* restock alert rows */
 .rs-row { display: grid; grid-template-columns: 34px 1fr auto; gap: 12px; align-items: center; padding: 11px 0; border-bottom: 1px solid var(--line-2); cursor: pointer; }
 .rs-row:hover { background: color-mix(in srgb, var(--surface) 50%, transparent); }
-.rs-row .rg { width: 34px; height: 34px; border: 1px solid var(--line); display: flex; align-items: center; justify-content: center; color: var(--ink-2); background: var(--surface-2); }
-.rs-row.out .rg { border-color: var(--accent); color: var(--accent); }
+.rs-row .rg { width: 34px; height: 34px; border: 1px solid var(--icon-well-line); display: flex; align-items: center; justify-content: center; background: var(--icon-well); padding: 4px; }
+.rs-row.out .rg { border-color: var(--accent); }
 .rs-row .nm { font-size: 13.5px; font-weight: 500; }
 .rs-row .sub { font-size: 9px; color: var(--ink-3); margin-top: 3px; font-family: "JetBrains Mono", monospace; }
 .rs-empty { padding: 13px 0; font-size: 10px; color: var(--ink-3); font-family: "JetBrains Mono", monospace; letter-spacing: .08em; border-bottom: 1px solid var(--line-2); }

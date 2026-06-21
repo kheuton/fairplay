@@ -516,7 +516,7 @@ function InvDetail({ item, onClose, onUpdateMeta, onAttest, onDelete }: InvDetai
             <div
               key={k}
               className={`ip${inv.icon === k ? ' on' : ''}`}
-              title={(ICON_LIB[k] as { displayName?: string })?.displayName ?? k}
+              title={ICON_LIB[k]?.label ?? k}
               onClick={() => onUpdateMeta(item.taskId, { icon: k })}
             >
               <ItemIcon name={k} size={20} />
