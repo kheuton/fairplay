@@ -30,6 +30,7 @@ export interface InvMeta {
   verified: string;
   rate: { n: number; per: 'day' | 'week' | 'month' };
   warn: { mode: 'days' | 'count'; value: number };
+  order?: number;
 }
 
 export interface FpMeta {

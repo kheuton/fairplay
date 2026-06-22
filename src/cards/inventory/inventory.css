@@ -68,3 +68,72 @@
 .inv-danger-btn:hover { color: var(--accent); border-color: var(--accent); }
 .inv-danger-confirm { display: flex; flex-direction: column; gap: 8px; }
 .inv-danger-confirm .warn-txt { color: var(--accent); font-size: 9px; letter-spacing: .08em; }
+
+/* ─── InvList — reorderable supply list ──────────────────────────────────── */
+
+.inv-list { display: flex; flex-direction: column; gap: 6px; }
+
+.inv-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  padding: 9px 11px;
+  cursor: pointer;
+  position: relative;
+}
+
+.inv-row.low { border-color: var(--accent); }
+.inv-row.low .inv-row-est { color: var(--accent); }
+.inv-row.out { border-color: var(--accent); }
+.inv-row.out .inv-row-est { color: var(--accent); font-weight: 700; }
+.inv-row.sel { outline: 0; box-shadow: 0 0 0 1px var(--accent-2); border-color: var(--accent-2); }
+.inv-row.dragging { z-index: 30; box-shadow: var(--shadow-lift); opacity: .95; cursor: grabbing; }
+
+.inv-row-grip {
+  cursor: grab;
+  touch-action: none;
+  color: var(--ink-4);
+  font-size: 13px;
+  line-height: 1;
+  letter-spacing: -2px;
+  user-select: none;
+  padding: 0 2px;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+}
+.inv-row-grip:hover { color: var(--ink-2); }
+
+/* Middle column: name + sub stacked */
+.inv-row-mid { flex: 1; min-width: 0; }
+
+.inv-row-name {
+  font-size: 12.5px;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.inv-row-sub { font-size: 9px; color: var(--ink-3); letter-spacing: .06em; margin-top: 2px; }
+
+/* Right cluster: est, chip, runout — stacked right-aligned */
+.inv-row-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+}
+
+.inv-row-est { font-size: 16px; color: var(--ink); }
+.inv-row-out { font-size: 8.5px; color: var(--ink-4); letter-spacing: .06em; }
+
+/* Mobile variant */
+.inv-list.mobile .inv-row { padding: 12px 12px; }
+.inv-list.mobile .inv-row-name { font-size: 14px; }
+.inv-list.mobile .inv-row-grip { font-size: 15px; }
+
+/* List-mode wrap in desktop stage */
+.inv-list-wrap { width: 100%; align-self: stretch; }

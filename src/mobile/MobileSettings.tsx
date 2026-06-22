@@ -26,6 +26,7 @@ export function MobileSettings() {
   const theme = useSettings((s) => s.themeByProfile[s.profile] ?? PROFILES[s.profile].theme);
   const density = useSettings((s) => s.density);
   const showGrid = useSettings((s) => s.showGrid);
+  const invLayout = useSettings((s) => s.invLayout);
   const token = useSettings((s) => s.token);
   const set = useSettings((s) => s.set);
 
@@ -111,6 +112,16 @@ export function MobileSettings() {
           >
             <i />
           </button>
+        </div>
+        <div className="m-set-row">
+          <div className="l">Inventory layout</div>
+          <div className="m-seg">
+            {(['list', 'grid'] as const).map((v) => (
+              <button key={v} className={invLayout === v ? 'on' : ''} onClick={() => set({ invLayout: v })}>
+                {v.toUpperCase()}
+              </button>
+            ))}
+          </div>
         </div>
 
         <div className="m-cat mono up">

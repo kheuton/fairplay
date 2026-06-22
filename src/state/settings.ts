@@ -8,6 +8,7 @@ export type { ProfileId };
 
 export type Density = 'compact' | 'regular' | 'comfy';
 export type InvDisplay = 'stacked' | 'inline' | 'toggle';
+export type InvLayout = 'list' | 'grid';
 
 // Build the default themeByProfile from PROFILES at module load time.
 const DEFAULT_THEME_BY_PROFILE = Object.fromEntries(
@@ -21,6 +22,7 @@ interface SettingsState {
   density: Density;
   showGrid: boolean;
   invDisplay: InvDisplay;
+  invLayout: InvLayout;
   token: string | null;
   setProfile: (p: ProfileId) => void;
   setTheme: (t: import('../lib/types').Theme) => void;
@@ -36,6 +38,9 @@ export const useSettings = create<SettingsState>()(
       density: 'compact',
       showGrid: true,
       invDisplay: 'stacked',
+      // Default shallow-merge guarantee: a persisted blob lacking invLayout keeps 'list'
+      // without any migrate branch or version bump.
+      invLayout: 'list',
       token: null,
       setProfile: (p) => set(() => ({ profile: p })),
       setTheme: (t) =>

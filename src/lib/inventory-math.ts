@@ -17,6 +17,8 @@ function parseDate(s: string): Date {
  *
  * Required numeric fields that can be undefined if the user hand-edits an FP::
  * payload: rate, warn, stack, count, x, y, w, h, verified.
+ * order is preserved when present and finite; otherwise omitted so legacy items
+ * fall back to query/Todoist order.
  * Returns a new object — never mutates the input.
  */
 export function normalizeInvMeta(raw: Partial<InvMeta>): InvMeta {
@@ -47,6 +49,7 @@ export function normalizeInvMeta(raw: Partial<InvMeta>): InvMeta {
       : new Date().toISOString().slice(0, 10),
     rate,
     warn,
+    ...(typeof raw.order === 'number' && Number.isFinite(raw.order) ? { order: raw.order } : {}),
   };
 }
 

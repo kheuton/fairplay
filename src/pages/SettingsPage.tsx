@@ -6,7 +6,7 @@ import React, { useState } from 'react';
 import { useSettings, useProfile } from '../state/settings';
 import { useDeck, useDeckTasks, useConnection, useAbsorbCharter, useDeckCharters } from '../lib/todoist/hooks';
 import { detectConceptTasks } from '../lib/charter';
-import type { Theme, Density, InvDisplay } from '../state/settings';
+import type { Theme, Density, InvDisplay, InvLayout } from '../state/settings';
 import type { CardDef } from '../lib/types';
 import { PROFILES } from '../cards/deck-config';
 
@@ -247,7 +247,7 @@ function ChartersSection() {
 export default function SettingsPage() {
   const theme = useSettings((s) => s.themeByProfile[s.profile] ?? PROFILES[s.profile].theme);
   const setTheme = useSettings((s) => s.setTheme);
-  const { density, showGrid, accent, invDisplay, set } = useSettings();
+  const { density, showGrid, accent, invDisplay, invLayout, set } = useSettings();
   const { status: connStatus } = useConnection();
 
   return (
@@ -358,6 +358,22 @@ export default function SettingsPage() {
                   key={v}
                   className={invDisplay === v ? 'on' : ''}
                   onClick={() => set({ invDisplay: v })}
+                >
+                  {v.toUpperCase()}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Inventory layout */}
+          <div className="cfg-row">
+            <span className="lbl">INVENTORY LAYOUT</span>
+            <div className="seg">
+              {(['list', 'grid'] as InvLayout[]).map((v) => (
+                <button
+                  key={v}
+                  className={invLayout === v ? 'on' : ''}
+                  onClick={() => set({ invLayout: v })}
                 >
                   {v.toUpperCase()}
                 </button>

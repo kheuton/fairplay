@@ -275,3 +275,15 @@
 @media (prefers-reduced-motion: reduce) {
   .m-drawer, .m-sheet, .m-backdrop, .m-task.settle, .m-toggle-sw, .m-toggle-sw i { transition: none !important; }
 }
+
+/* ─── Inventory mobile overrides ─────────────────────────── */
+/* Horizontal scroll wrapper for grid mode on mobile (best-effort; list is primary). */
+.m-inv-gridscroll { overflow-x: auto; -webkit-overflow-scrolling: touch; padding-bottom: 4px; }
+/* Spacing above the add-supply action row. */
+.m-inv-add { margin-top: 10px; }
+/* Extra top breathing room for the SUPPLIES divider (sits below the task list). */
+.m-inv-cat { margin-top: 16px; }
+/* Empty-supplies action column (seed + add). */
+.m-inv-empty { display: flex; flex-direction: column; gap: 10px; padding: 8px 0; }
+/* InvDetail inside the sheet: theme.css handles .inv-detail padding; trim if cramped. */
+.m-sheet .inv-detail { padding: 0 2px; }

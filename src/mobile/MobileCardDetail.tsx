@@ -13,6 +13,7 @@ import { TRIAGE_ORDER } from '../lib/triage';
 import { MobileTaskGroups } from './TaskGroups';
 import { NoTokenNotice } from './atoms';
 import { Ic } from './icons';
+import { MobileInventory } from './MobileInventory';
 
 export function MobileCardDetail() {
   const { id } = useParams<{ id: string }>();
@@ -49,14 +50,17 @@ export function MobileCardDetail() {
     );
   } else {
     body = (
-      <MobileTaskGroups
-        tasks={tasks}
-        buckets={TRIAGE_ORDER}
-        now={now}
-        onComplete={(tid) => closeTask.mutate(tid)}
-        emptyLabel="ALL CLEAR"
-        emptySub="No open tasks on this card."
-      />
+      <>
+        <MobileTaskGroups
+          tasks={tasks}
+          buckets={TRIAGE_ORDER}
+          now={now}
+          onComplete={(tid) => closeTask.mutate(tid)}
+          emptyLabel="ALL CLEAR"
+          emptySub="No open tasks on this card."
+        />
+        {card?.kind === 'inventory' && <MobileInventory card={card} />}
+      </>
     );
   }
 
