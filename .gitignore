@@ -19,6 +19,7 @@ worker/*/tmp/
 # logs & tool state
 logs/
 *.log
+.claude/
 .design-canvas.state.json
 .thumbnail
 _run.sh
