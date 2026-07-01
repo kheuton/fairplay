@@ -137,3 +137,16 @@
 
 /* List-mode wrap in desktop stage */
 .inv-list-wrap { width: 100%; align-self: stretch; }
+
+/* List mode overflows the stage when there are many items. The shared .inv-wrap
+   vertically centers its child (right for the fixed-size grid), which clips a long
+   list's top out of reach with no scroll. In list mode, top-align and let the wrap
+   scroll instead. Grid mode is untouched. */
+.inv-wrap.list {
+  justify-content: flex-start;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--ink-4) transparent;
+}
+.inv-wrap.list::-webkit-scrollbar { width: 9px; }
+.inv-wrap.list::-webkit-scrollbar-thumb { background: var(--ink-4); }

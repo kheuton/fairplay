@@ -537,7 +537,7 @@ export default function InventoryView({ card }: Props) {
             )}
           </div>
 
-          <div className="inv-wrap">
+          <div className={`inv-wrap${invLayout === 'list' ? ' list' : ''}`}>
             {invLayout === 'list' ? (
               <div className="inv-list-wrap">
                 <InvList
